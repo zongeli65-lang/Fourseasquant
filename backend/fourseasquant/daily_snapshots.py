@@ -27,6 +27,8 @@ from fourseasquant.strategy_performance import (
     StrategyPerformance,
 )
 from fourseasquant.simulated_strategy_data import simulated_strategy_performance
+from fourseasquant.portfolio_review import PortfolioReview
+from fourseasquant.simulated_portfolio_data import simulated_portfolio_review
 
 
 TaskStatus = Literal["not_run", "running", "succeeded", "failed"]
@@ -40,6 +42,7 @@ class MinimalSnapshot(BaseModel):
     market_overview: MarketOverview
     sector_performance: SectorPerformance
     strategy_performance: StrategyPerformance
+    portfolio_review: PortfolioReview
 
 
 class DashboardResponse(BaseModel):
@@ -60,13 +63,18 @@ class TaskRunResponse(BaseModel):
 
 
 def simulated_snapshot(target_date: date) -> Mapping[str, object]:
+    strategy_performance = simulated_strategy_performance(target_date)
     return {
         "source": "simulation",
         "label": "确定性模拟快照",
         "seed": int(target_date.strftime("%Y%m%d")),
         "market_overview": simulated_market_overview().model_dump(),
         "sector_performance": simulated_sector_performance().model_dump(),
-        "strategy_performance": simulated_strategy_performance(target_date).model_dump(),
+        "strategy_performance": strategy_performance.model_dump(),
+        "portfolio_review": simulated_portfolio_review(
+            target_date,
+            strategy_performance.daily_summary.strategy_return_pct,
+        ).model_dump(),
     }
 
 

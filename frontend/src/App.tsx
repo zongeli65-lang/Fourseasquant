@@ -9,6 +9,7 @@ import {
   type StrategyPerformanceData,
 } from "./StrategyPerformance";
 import { ReviewNotes } from "./ReviewNotes";
+import { PortfolioReview, type PortfolioReviewData } from "./PortfolioReview";
 
 type HealthStatus = {
   application: string;
@@ -31,6 +32,7 @@ type DashboardSnapshot = {
   market_overview: MarketOverviewData;
   sector_performance: SectorPerformanceData;
   strategy_performance: StrategyPerformanceData;
+  portfolio_review: PortfolioReviewData;
 };
 
 type DashboardData = {
@@ -59,10 +61,6 @@ async function fetchDashboard(
   }
   return (await response.json()) as DashboardData;
 }
-
-const dashboardSections = [
-  ["持仓与交易", "持仓、交易和收益贡献将在后续切片接入"],
-] as const;
 
 const taskStatusLabels: Record<TaskStatus, string> = {
   not_run: "尚未运行",
@@ -301,21 +299,16 @@ export function App() {
         <StrategyPerformance data={dashboard.data.snapshot.strategy_performance} />
       )}
 
+      {dashboard.kind === "ready" && dashboard.data.snapshot && (
+        <PortfolioReview data={dashboard.data.snapshot.portfolio_review} />
+      )}
+
       <ReviewNotes
         reviewDate={
           dashboard.kind === "ready" ? dashboard.data.actual_data_date : null
         }
       />
 
-      <section className="section-grid" aria-label="仪表盘模块">
-        {dashboardSections.map(([title, description]) => (
-          <article className="module-card" key={title}>
-            <span className="module-number">待接入</span>
-            <h2>{title}</h2>
-            <p>{description}</p>
-          </article>
-        ))}
-      </section>
     </main>
   );
 }

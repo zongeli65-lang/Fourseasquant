@@ -331,6 +331,43 @@ class LocalApplicationTest(unittest.TestCase):
         self.assertEqual(restored["note"], "指数分化，关注主板成交持续性。")
         self.assertEqual(restored["tags"], ["放量", "观察"])
 
+    def test_portfolio_snapshot_is_balanced_and_contributions_reconcile(self) -> None:
+        request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2):
+            pass
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            snapshot = json.load(response)["snapshot"]
+
+        portfolio = snapshot["portfolio_review"]
+        holdings = portfolio["holdings"]
+        self.assertEqual(len(holdings), 24)
+        self.assertEqual(
+            len({holding["security"]["code"] for holding in holdings}),
+            24,
+        )
+        self.assertAlmostEqual(
+            sum(holding["weight_pct"] for holding in holdings),
+            100.0,
+            places=3,
+        )
+        self.assertTrue(
+            all(trade["date"] == "2026-07-21" for trade in portfolio["trades"])
+        )
+        self.assertAlmostEqual(
+            sum(item["contribution_pct"] for item in portfolio["contributions"]),
+            snapshot["strategy_performance"]["daily_summary"]["strategy_return_pct"],
+            places=4,
+        )
+
     def test_root_page_exposes_the_desktop_dashboard_shell(self) -> None:
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:
             page = response.read().decode("utf-8")

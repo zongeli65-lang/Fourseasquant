@@ -737,6 +737,98 @@ h2 {
   justify-content: space-between;
 }
 
+.portfolio-review {
+  margin-bottom: 18px;
+  padding: 24px;
+  border: 1px solid #22324a;
+  border-radius: 14px;
+  background: rgba(10, 18, 31, 0.96);
+}
+
+.portfolio-review__header,
+.portfolio-meta,
+.portfolio-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.portfolio-review__header h2 {
+  margin-bottom: 0;
+  font-size: 19px;
+}
+
+.portfolio-meta {
+  gap: 14px;
+  color: #687a95;
+  font-size: 10px;
+}
+
+.portfolio-toolbar {
+  margin: 18px 0 10px;
+  color: #7688a1;
+  font-size: 10px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #1f2e45;
+  background: rgba(9, 17, 30, 0.74);
+  font-size: 11px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid #1d2a3e;
+  text-align: right;
+}
+
+.data-table th:first-child,
+.data-table td:first-child,
+.data-table th:nth-child(2),
+.data-table td:nth-child(2) {
+  text-align: left;
+}
+
+.data-table th {
+  color: #62738d;
+  background: #0d1727;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.data-table th button {
+  padding: 0;
+  border: 0;
+  color: #7890ae;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.data-table td {
+  color: #aebdd0;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table td strong,
+.data-table td span {
+  display: block;
+}
+
+.data-table td strong {
+  color: #d5dfec;
+  font-size: 11px;
+}
+
+.data-table td span {
+  margin-top: 3px;
+  color: #52637b;
+  font-size: 8px;
+}
+
 .review-notes__header h2 {
   margin-bottom: 0;
   font-size: 19px;

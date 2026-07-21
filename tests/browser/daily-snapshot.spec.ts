@@ -57,6 +57,15 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
     allRangeStatistics ?? "",
   );
 
+  await expect(page.getByRole("heading", { name: "持仓与交易复盘" })).toBeVisible();
+  await expect(page.getByText("演示组合数据")).toBeVisible();
+  await expect(page.getByTestId("holdings-table").locator("tbody tr")).toHaveCount(24);
+  await page.getByRole("button", { name: "当日交易" }).click();
+  await expect(page.getByTestId("trades-table").locator("tbody tr")).toHaveCount(6);
+  await page.getByRole("button", { name: "收益贡献" }).click();
+  await expect(page.getByTestId("contributions-table").locator("tbody tr")).toHaveCount(24);
+  await page.getByRole("button", { name: "按贡献排序" }).click();
+
   await expect(page.getByTestId("review-save-status")).toHaveText("尚无笔记");
   await page.getByRole("textbox", { name: "复盘笔记" }).fill(
     "指数分化，关注主板成交持续性。",
