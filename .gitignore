@@ -18,6 +18,9 @@ __pycache__/
 node_modules/
 frontend/dist/
 *.tsbuildinfo
+test-results/
+work/
+playwright-report/
 
 # Fourseasquant 本地运行数据
 data/

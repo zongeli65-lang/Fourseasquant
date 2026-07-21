@@ -20,6 +20,7 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["backend"]
 
 [tool.mypy]
 python_version = "3.14"

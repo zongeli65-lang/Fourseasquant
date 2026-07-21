@@ -12,6 +12,41 @@ type ConnectionState =
   | { kind: "degraded"; health: HealthStatus }
   | { kind: "offline" };
 
+type TaskStatus = "not_run" | "running" | "succeeded" | "failed";
+
+type DashboardSnapshot = {
+  source: string;
+  label: string;
+  seed: number;
+};
+
+type DashboardData = {
+  target_date: string;
+  actual_data_date: string | null;
+  last_updated_at: string | null;
+  task_status: TaskStatus;
+  snapshot: DashboardSnapshot | null;
+};
+
+type DashboardState =
+  | { kind: "loading" }
+  | { kind: "ready"; data: DashboardData }
+  | { kind: "error" };
+
+async function fetchDashboard(
+  targetDate: string,
+  signal?: AbortSignal,
+): Promise<DashboardData> {
+  const response = await fetch(
+    `/api/dashboard?target_date=${encodeURIComponent(targetDate)}`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw new Error(`仪表盘接口返回 ${response.status}`);
+  }
+  return (await response.json()) as DashboardData;
+}
+
 const dashboardSections = [
   ["市场情绪", "指数、广度与成交状态将在每日快照中呈现"],
   ["板块与概念", "行业与概念排行榜及热力图将在后续切片接入"],
@@ -19,6 +54,24 @@ const dashboardSections = [
   ["持仓与交易", "持仓、交易和收益贡献将在后续切片接入"],
   ["复盘记录", "每日笔记与标签将在后续切片接入"],
 ] as const;
+
+const taskStatusLabels: Record<TaskStatus, string> = {
+  not_run: "尚未运行",
+  running: "正在运行",
+  succeeded: "运行成功",
+  failed: "运行失败",
+};
+
+function beijingDate(): string {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
 function connectionCopy(connection: ConnectionState): {
   label: string;
@@ -58,6 +111,9 @@ function connectionCopy(connection: ConnectionState): {
 
 export function App() {
   const [connection, setConnection] = useState<ConnectionState>({ kind: "loading" });
+  const [targetDate, setTargetDate] = useState(beijingDate);
+  const [dashboard, setDashboard] = useState<DashboardState>({ kind: "loading" });
+  const [isRunning, setIsRunning] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -86,6 +142,46 @@ export function App() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadDashboard() {
+      setDashboard({ kind: "loading" });
+      try {
+        const data = await fetchDashboard(targetDate, controller.signal);
+        setDashboard({ kind: "ready", data });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setDashboard({ kind: "error" });
+      }
+    }
+
+    void loadDashboard();
+    return () => controller.abort();
+  }, [targetDate]);
+
+  async function runDailyTask() {
+    setIsRunning(true);
+    try {
+      const response = await fetch("/api/tasks/daily", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_date: targetDate }),
+      });
+      if (!response.ok) {
+        throw new Error(`每日任务接口返回 ${response.status}`);
+      }
+      const data = await fetchDashboard(targetDate);
+      setDashboard({ kind: "ready", data });
+    } catch {
+      setDashboard({ kind: "error" });
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
   const status = connectionCopy(connection);
 
   return (
@@ -105,6 +201,79 @@ export function App() {
           <p>{status.detail}</p>
         </div>
         <span className={`status-pill status-pill--${status.tone}`}>{status.label}</span>
+      </section>
+
+      <section className="snapshot-panel" aria-labelledby="daily-snapshot-status">
+        <div className="snapshot-heading">
+          <div>
+            <p className="section-kicker">每日快照</p>
+            <h2 id="daily-snapshot-status">目标日期与发布状态</h2>
+          </div>
+          <label className="date-control">
+            <span>目标日期</span>
+            <input
+              type="date"
+              value={targetDate}
+              onChange={(event) => setTargetDate(event.target.value)}
+            />
+          </label>
+        </div>
+
+        {dashboard.kind === "loading" && (
+          <p className="snapshot-message">正在读取目标日期状态…</p>
+        )}
+        {dashboard.kind === "error" && (
+          <p className="snapshot-message snapshot-message--error">
+            无法读取或运行每日任务，请确认本地服务状态。
+          </p>
+        )}
+        {dashboard.kind === "ready" && (
+          <div className="snapshot-content">
+            <dl className="snapshot-facts">
+              <div>
+                <dt>任务状态</dt>
+                <dd data-testid="task-status">
+                  {isRunning
+                    ? taskStatusLabels.running
+                    : taskStatusLabels[dashboard.data.task_status]}
+                </dd>
+              </div>
+              <div>
+                <dt>目标日期</dt>
+                <dd>{dashboard.data.target_date}</dd>
+              </div>
+              <div>
+                <dt>实际数据日期</dt>
+                <dd data-testid="actual-data-date">
+                  {dashboard.data.actual_data_date ?? "尚无已发布快照"}
+                </dd>
+              </div>
+              <div>
+                <dt>最近更新时间</dt>
+                <dd>
+                  {dashboard.data.last_updated_at
+                    ? new Date(dashboard.data.last_updated_at).toLocaleString("zh-CN", {
+                        timeZone: "Asia/Shanghai",
+                        hour12: false,
+                      })
+                    : "—"}
+                </dd>
+              </div>
+            </dl>
+            <div className="snapshot-action">
+              <p>
+                {dashboard.data.snapshot?.label ?? "尚无已发布快照"}
+              </p>
+              <button
+                type="button"
+                disabled={isRunning}
+                onClick={() => void runDailyTask()}
+              >
+                {isRunning ? "正在运行…" : "运行目标日期任务"}
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="section-grid" aria-label="仪表盘模块">

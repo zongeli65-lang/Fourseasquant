@@ -37,24 +37,26 @@ def main() -> int:
     web_port = environment.get("FOURSEASQUANT_WEB_PORT", "5173")
     environment["FOURSEASQUANT_API_ORIGIN"] = f"http://127.0.0.1:{api_port}"
     environment["FOURSEASQUANT_WEB_ORIGIN"] = f"http://127.0.0.1:{web_port}"
+    backend_command = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "--app-dir",
+        "backend",
+        "fourseasquant.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        api_port,
+    ]
+    if environment.get("FOURSEASQUANT_RELOAD", "1") == "1":
+        backend_command.append("--reload")
     environment.setdefault(
         "FOURSEASQUANT_DB_PATH", str(REPOSITORY_ROOT / "data" / "fourseasquant.db")
     )
     processes = [
         start_process(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "--app-dir",
-                "backend",
-                "fourseasquant.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                api_port,
-                "--reload",
-            ],
+            backend_command,
             environment,
         ),
         start_process(

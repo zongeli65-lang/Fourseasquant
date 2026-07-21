@@ -1,60 +1,30 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
-from typing import cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from fourseasquant.daily_snapshots import (
+    DashboardResponse,
+    TaskRunResponse,
+    execute_daily_task,
+    read_dashboard,
+)
+from fourseasquant.database import (
+    database_is_ready,
+    database_path,
+    initialize_database,
+)
 
 
 APPLICATION_NAME = "Fourseasquant"
-
-
-def database_path() -> Path:
-    configured_path = os.environ.get("FOURSEASQUANT_DB_PATH")
-    if configured_path:
-        return Path(configured_path)
-    return Path("data/fourseasquant.db")
-
-
-def initialize_database(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '1')
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """
-        )
-
-
-def database_is_ready(path: Path) -> bool:
-    try:
-        with sqlite3.connect(path) as connection:
-            row = cast(
-                tuple[str] | None,
-                connection.execute(
-                    "SELECT value FROM app_metadata WHERE key = 'schema_version'"
-                ).fetchone(),
-            )
-    except sqlite3.Error:
-        return False
-    return row == ("1",)
 
 
 @asynccontextmanager
@@ -69,7 +39,7 @@ app.add_middleware(
     allow_origins=[
         os.environ.get("FOURSEASQUANT_WEB_ORIGIN", "http://127.0.0.1:5173")
     ],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -80,6 +50,10 @@ class HealthResponse(BaseModel):
     database: str
 
 
+class DailyTaskRequest(BaseModel):
+    target_date: date
+
+
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     ready = database_is_ready(database_path())
@@ -88,6 +62,16 @@ def health() -> HealthResponse:
         status="ok" if ready else "degraded",
         database="ready" if ready else "unavailable",
     )
+
+
+@app.get("/api/dashboard", response_model=DashboardResponse)
+def dashboard(target_date: date) -> DashboardResponse:
+    return read_dashboard(target_date)
+
+
+@app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)
+def run_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
+    return execute_daily_task(request.target_date)
 
 
 FRONTEND_DISTRIBUTION = Path(__file__).resolve().parents[2] / "frontend" / "dist"
