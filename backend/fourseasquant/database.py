@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -93,6 +94,24 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS automation_claims (
+                target_date TEXT PRIMARY KEY,
+                claimed_at TEXT NOT NULL,
+                claim_id TEXT NOT NULL
+            )
+            """
+        )
+        claim_columns = {
+            cast(str, row[1])
+            for row in connection.execute("PRAGMA table_info(automation_claims)")
+        }
+        if "claim_id" not in claim_columns:
+            connection.execute("ALTER TABLE automation_claims ADD COLUMN claim_id TEXT")
+            connection.execute(
+                "UPDATE automation_claims SET claim_id = lower(hex(randomblob(16))) WHERE claim_id IS NULL"
+            )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS daily_reviews (
                 review_date TEXT PRIMARY KEY,
                 note TEXT NOT NULL,
@@ -126,7 +145,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '2')
+            VALUES ('schema_version', '3')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -143,7 +162,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("2",)
+    return row == ("3",)
 
 
 def latest_snapshot(path: Path, target_date: date) -> SnapshotRow | None:
@@ -341,3 +360,54 @@ def latest_task_run(path: Path, target_date: date) -> TaskRunRow | None:
         status=cast(str, row[6]),
         error_summary=cast(str | None, row[7]),
     )
+
+
+def claim_automation_date(
+    path: Path,
+    target_date: date,
+    claimed_at: datetime,
+    *,
+    stale_after_seconds: int = 7_200,
+) -> str | None:
+    stale_before = claimed_at.timestamp() - stale_after_seconds
+    claim_id = str(uuid.uuid4())
+    with sqlite3.connect(path) as connection:
+        existing = connection.execute(
+            "SELECT claimed_at, claim_id FROM automation_claims WHERE target_date = ?",
+            (target_date.isoformat(),),
+        ).fetchone()
+        if existing is not None:
+            existing_claim = cast(str, existing[0])
+            existing_claim_id = cast(str, existing[1])
+            existing_time = datetime.fromisoformat(existing_claim)
+            if existing_time.timestamp() < stale_before:
+                connection.execute(
+                    "DELETE FROM automation_claims WHERE target_date = ? AND claim_id = ?",
+                    (target_date.isoformat(), existing_claim_id),
+                )
+        cursor = connection.execute(
+            "INSERT OR IGNORE INTO automation_claims (target_date, claimed_at, claim_id) VALUES (?, ?, ?)",
+            (target_date.isoformat(), claimed_at.isoformat(), claim_id),
+        )
+        return claim_id if cursor.rowcount == 1 else None
+
+
+def release_automation_date(path: Path, target_date: date, claim_id: str) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "DELETE FROM automation_claims WHERE target_date = ? AND claim_id = ?",
+            (target_date.isoformat(), claim_id),
+        )
+
+
+def scheduled_attempt_exists(path: Path, target_date: date) -> bool:
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT 1 FROM task_runs
+            WHERE target_date = ? AND trigger_method = 'scheduled'
+            LIMIT 1
+            """,
+            (target_date.isoformat(),),
+        ).fetchone()
+    return row is not None

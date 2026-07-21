@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ from fourseasquant.backfill import (
     execute_backfill,
     preview_backfill,
 )
+from fourseasquant.automation import run_startup_catchup
 
 from fourseasquant.daily_snapshots import (
     DashboardResponse,
@@ -56,7 +58,20 @@ APPLICATION_NAME = "Fourseasquant"
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     initialize_database(database_path())
+    catchup_task: asyncio.Task[None] | None = None
+    if os.environ.get("FOURSEASQUANT_ENABLE_STARTUP_CATCHUP", "0") == "1":
+        catchup_task = asyncio.create_task(_run_startup_catchup())
     yield
+    if catchup_task:
+        await catchup_task
+
+
+async def _run_startup_catchup() -> None:
+    try:
+        await asyncio.to_thread(run_startup_catchup)
+    except Exception:
+        # 启动补跑失败已有任务日志；不能阻止网站读取最近成功结果。
+        pass
 
 
 app = FastAPI(title=APPLICATION_NAME, lifespan=lifespan)

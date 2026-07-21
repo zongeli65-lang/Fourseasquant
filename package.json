@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "dev": "uv run python scripts/dev.py",
+    "start": "npm run build --workspace frontend && uv run python scripts/start.py",
     "build": "npm run build --workspace frontend",
     "typecheck": "npm run typecheck --workspace frontend && tsc --project tsconfig.tests.json --noEmit --pretty false && uv run mypy",
     "test:browser": "playwright test",

@@ -45,6 +45,7 @@ class LocalApplicationTest(unittest.TestCase):
             Path(self.temporary_directory.name) / "tasks.jsonl"
         )
         self.environment["FOURSEASQUANT_ENABLE_FAILURE_SIMULATION"] = "1"
+        self.environment["FOURSEASQUANT_ENABLE_STARTUP_CATCHUP"] = "0"
         self.process = self.start_application()
 
     def start_application(self) -> subprocess.Popen[str]:
