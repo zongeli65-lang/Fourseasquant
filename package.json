@@ -1,0 +1,14 @@
+{
+  "name": "fourseasquant",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "uv run python scripts/dev.py",
+    "build": "npm run build --workspace frontend",
+    "typecheck": "npm run typecheck --workspace frontend && uv run mypy",
+    "test": "npm run build --workspace frontend && uv run pytest"
+  }
+}
