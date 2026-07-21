@@ -56,6 +56,16 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS daily_reviews (
+                review_date TEXT PRIMARY KEY,
+                note TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
             INSERT INTO app_metadata (key, value)
             VALUES ('schema_version', '1')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -118,6 +128,15 @@ def latest_task_status(path: Path, target_date: date) -> str:
             ).fetchone(),
         )
     return row[0] if row else "not_run"
+
+
+def snapshot_exists(path: Path, target_date: date) -> bool:
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            "SELECT 1 FROM daily_snapshots WHERE target_date = ?",
+            (target_date.isoformat(),),
+        ).fetchone()
+    return row is not None
 
 
 def create_task_run(path: Path, target_date: date, started_at: datetime) -> int:

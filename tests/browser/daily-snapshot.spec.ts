@@ -56,4 +56,23 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await expect(page.getByTestId("strategy-statistics")).not.toHaveText(
     allRangeStatistics ?? "",
   );
+
+  await expect(page.getByTestId("review-save-status")).toHaveText("尚无笔记");
+  await page.getByRole("textbox", { name: "复盘笔记" }).fill(
+    "指数分化，关注主板成交持续性。",
+  );
+  await page.getByRole("textbox", { name: "新标签" }).fill("放量");
+  await page.getByRole("button", { name: "添加标签" }).click();
+  await page.getByRole("textbox", { name: "新标签" }).fill("观察");
+  await page.getByRole("button", { name: "添加标签" }).click();
+  await page.getByRole("button", { name: "保存复盘" }).click();
+  await expect(page.getByTestId("review-save-status")).toHaveText("保存成功");
+
+  await page.reload();
+  await page.getByRole("textbox", { name: "目标日期" }).fill("2026-07-20");
+  await expect(page.getByRole("textbox", { name: "复盘笔记" })).toHaveValue(
+    "指数分化，关注主板成交持续性。",
+  );
+  await expect(page.getByRole("button", { name: "移除 放量" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "移除 观察" })).toBeVisible();
 });

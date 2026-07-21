@@ -721,6 +721,151 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.review-notes {
+  margin-bottom: 18px;
+  padding: 24px;
+  border: 1px solid #22324a;
+  border-radius: 14px;
+  background: rgba(10, 18, 31, 0.96);
+}
+
+.review-notes__header,
+.tag-input-row,
+.review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.review-notes__header h2 {
+  margin-bottom: 0;
+  font-size: 19px;
+}
+
+.review-date {
+  color: #70819a;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.review-empty {
+  margin-top: 18px;
+  padding: 38px;
+  border: 1px dashed #28364c;
+  border-radius: 10px;
+  color: #617089;
+  text-align: center;
+  font-size: 12px;
+}
+
+.review-error {
+  color: #f06f7d;
+}
+
+.review-editor {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.review-editor label > span,
+.tag-input-row label > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #71829a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.review-editor textarea,
+.tag-input-row input {
+  width: 100%;
+  border: 1px solid #26364e;
+  border-radius: 8px;
+  color: #dfe7f2;
+  background: #09111e;
+  outline: none;
+}
+
+.review-editor textarea {
+  min-height: 150px;
+  padding: 14px;
+  resize: vertical;
+  line-height: 1.65;
+}
+
+.tag-editor {
+  padding: 14px;
+  border: 1px solid #1f2e45;
+  border-radius: 10px;
+  background: rgba(12, 21, 35, 0.72);
+}
+
+.tag-input-row {
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.tag-input-row label {
+  flex: 1;
+}
+
+.tag-input-row input {
+  height: 36px;
+  padding: 0 10px;
+}
+
+.tag-input-row button,
+.review-actions > button {
+  height: 36px;
+  padding: 0 13px;
+  border: 1px solid #315d92;
+  border-radius: 7px;
+  color: #eaf3ff;
+  background: #173b64;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.review-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid #30445f;
+  border-radius: 999px;
+  color: #b9c9dc;
+  background: #14233a;
+  font-size: 10px;
+}
+
+.review-tag button {
+  padding: 0;
+  border: 0;
+  color: #7487a2;
+  background: transparent;
+  cursor: pointer;
+}
+
+.no-tags {
+  color: #5d6d84;
+  font-size: 10px;
+}
+
+.review-actions {
+  grid-column: 1 / -1;
+  color: #71829a;
+  font-size: 10px;
+}
+
 .status-panel p:last-child,
 .module-card p {
   margin-bottom: 0;
@@ -760,7 +905,7 @@ h2 {
 }
 
 .module-card {
-  grid-column: span 6;
+  grid-column: span 12;
   min-height: 168px;
   padding: 22px;
   border: 1px solid #1e2a3d;

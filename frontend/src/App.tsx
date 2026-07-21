@@ -8,6 +8,7 @@ import {
   StrategyPerformance,
   type StrategyPerformanceData,
 } from "./StrategyPerformance";
+import { ReviewNotes } from "./ReviewNotes";
 
 type HealthStatus = {
   application: string;
@@ -61,7 +62,6 @@ async function fetchDashboard(
 
 const dashboardSections = [
   ["持仓与交易", "持仓、交易和收益贡献将在后续切片接入"],
-  ["复盘记录", "每日笔记与标签将在后续切片接入"],
 ] as const;
 
 const taskStatusLabels: Record<TaskStatus, string> = {
@@ -300,6 +300,12 @@ export function App() {
       {dashboard.kind === "ready" && dashboard.data.snapshot && (
         <StrategyPerformance data={dashboard.data.snapshot.strategy_performance} />
       )}
+
+      <ReviewNotes
+        reviewDate={
+          dashboard.kind === "ready" ? dashboard.data.actual_data_date : null
+        }
+      />
 
       <section className="section-grid" aria-label="仪表盘模块">
         {dashboardSections.map(([title, description]) => (

@@ -26,6 +26,7 @@ def available_port() -> int:
 
 class LocalApplicationTest(unittest.TestCase):
     temporary_directory: tempfile.TemporaryDirectory[str]
+    environment: dict[str, str]
     port: int
     process: subprocess.Popen[str]
 
@@ -35,10 +36,13 @@ class LocalApplicationTest(unittest.TestCase):
             dir=TEST_WORK_DIRECTORY
         )
         self.port = available_port()
-        environment = os.environ.copy()
-        environment["FOURSEASQUANT_DB_PATH"] = str(
+        self.environment = dict(os.environ)
+        self.environment["FOURSEASQUANT_DB_PATH"] = str(
             Path(self.temporary_directory.name) / "application.db"
         )
+        self.process = self.start_application()
+
+    def start_application(self) -> subprocess.Popen[str]:
         self.process = subprocess.Popen(
             [
                 sys.executable,
@@ -53,7 +57,7 @@ class LocalApplicationTest(unittest.TestCase):
                 str(self.port),
             ],
             cwd=REPOSITORY_ROOT,
-            env=environment,
+            env=self.environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -68,10 +72,15 @@ class LocalApplicationTest(unittest.TestCase):
                 with urlopen(
                     f"http://127.0.0.1:{self.port}/api/health", timeout=0.2
                 ):
-                    return
+                    return self.process
             except URLError:
                 time.sleep(0.05)
         raise RuntimeError("应用未在五秒内启动")
+
+    def restart_application(self) -> None:
+        self.process.terminate()
+        self.process.communicate(timeout=5)
+        self.process = self.start_application()
 
     def tearDown(self) -> None:
         if self.process.poll() is None:
@@ -283,6 +292,44 @@ class LocalApplicationTest(unittest.TestCase):
             strategy["range_statistics"]["all"],
             strategy["range_statistics"]["quarter"],
         )
+
+    def test_review_note_and_tags_survive_application_restart(self) -> None:
+        task_request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(task_request, timeout=2):
+            pass
+
+        save_request = Request(
+            f"http://127.0.0.1:{self.port}/api/reviews/2026-07-21",
+            data=json.dumps(
+                {
+                    "note": "指数分化，关注主板成交持续性。",
+                    "tags": ["放量", "观察", "放量"],
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urlopen(save_request, timeout=2) as response:
+            saved = json.load(response)
+
+        self.assertEqual(saved["date"], "2026-07-21")
+        self.assertEqual(saved["tags"], ["放量", "观察"])
+        self.assertIsNotNone(saved["updated_at"])
+
+        self.restart_application()
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/reviews/2026-07-21",
+            timeout=1,
+        ) as response:
+            restored = json.load(response)
+
+        self.assertEqual(restored["note"], "指数分化，关注主板成交持续性。")
+        self.assertEqual(restored["tags"], ["放量", "观察"])
 
     def test_root_page_exposes_the_desktop_dashboard_shell(self) -> None:
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -21,6 +21,13 @@ from fourseasquant.database import (
     database_is_ready,
     database_path,
     initialize_database,
+    snapshot_exists,
+)
+from fourseasquant.review_notes import (
+    ReviewResponse,
+    ReviewWriteRequest,
+    read_review,
+    save_review,
 )
 
 
@@ -39,7 +46,7 @@ app.add_middleware(
     allow_origins=[
         os.environ.get("FOURSEASQUANT_WEB_ORIGIN", "http://127.0.0.1:5173")
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
 )
 
@@ -72,6 +79,23 @@ def dashboard(target_date: date) -> DashboardResponse:
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)
 def run_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
     return execute_daily_task(request.target_date)
+
+
+def review_database_path(review_date: date) -> Path:
+    path = database_path()
+    if not snapshot_exists(path, review_date):
+        raise HTTPException(status_code=404, detail="该日期尚无已发布快照")
+    return path
+
+
+@app.get("/api/reviews/{review_date}", response_model=ReviewResponse)
+def get_review(review_date: date) -> ReviewResponse:
+    return read_review(review_database_path(review_date), review_date)
+
+
+@app.put("/api/reviews/{review_date}", response_model=ReviewResponse)
+def put_review(review_date: date, request: ReviewWriteRequest) -> ReviewResponse:
+    return save_review(review_database_path(review_date), review_date, request)
 
 
 FRONTEND_DISTRIBUTION = Path(__file__).resolve().parents[2] / "frontend" / "dist"
