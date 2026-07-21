@@ -94,4 +94,24 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   );
   await expect(page.getByRole("button", { name: "移除 放量" })).toBeVisible();
   await expect(page.getByRole("button", { name: "移除 观察" })).toBeVisible();
+
+  await page.getByRole("textbox", { name: "目标日期" }).fill("2026-07-21");
+  await page.route("**/api/tasks/daily", async (route) => {
+    await page.request.post("/api/testing/tasks/daily", {
+      data: { target_date: "2026-07-21", stage: "transactional_publish" },
+    });
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "测试环境模拟真实服务异常" }),
+    });
+  });
+  await page.getByRole("button", { name: "运行目标日期任务" }).click();
+  await expect(page.getByRole("heading", { name: "今日更新失败" })).toBeVisible();
+  await expect(page.getByTestId("failure-stage")).toHaveText("事务发布");
+  await expect(page.getByTestId("actual-data-date")).toHaveText("2026-07-20");
+  await page.getByRole("button", { name: "重新运行今日任务" }).click();
+  await expect(page.getByTestId("task-status")).toHaveText("运行成功");
+  await expect(page.getByTestId("actual-data-date")).toHaveText("2026-07-21");
+  await expect(page.getByRole("heading", { name: "今日更新失败" })).toHaveCount(0);
 });

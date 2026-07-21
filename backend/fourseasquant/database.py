@@ -15,6 +15,18 @@ class SnapshotRow:
     published_at: datetime
 
 
+@dataclass(frozen=True)
+class TaskRunRow:
+    id: int
+    trigger_method: str
+    target_date: date
+    started_at: datetime
+    finished_at: datetime | None
+    stage: str
+    status: str
+    error_summary: str | None
+
+
 def database_path() -> Path:
     configured_path = os.environ.get("FOURSEASQUANT_DB_PATH")
     if configured_path:
@@ -41,8 +53,33 @@ def initialize_database(path: Path) -> None:
                 target_date TEXT NOT NULL,
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL DEFAULT 'queued',
+                error_summary TEXT
             )
+            """
+        )
+        task_columns = {
+            cast(str, row[1])
+            for row in connection.execute("PRAGMA table_info(task_runs)")
+        }
+        if "stage" not in task_columns:
+            connection.execute(
+                "ALTER TABLE task_runs ADD COLUMN stage TEXT NOT NULL DEFAULT 'queued'"
+            )
+        if "error_summary" not in task_columns:
+            connection.execute(
+                "ALTER TABLE task_runs ADD COLUMN error_summary TEXT"
+            )
+        connection.execute(
+            """
+            UPDATE task_runs
+            SET stage = CASE
+                WHEN status = 'succeeded' THEN 'completed'
+                WHEN status = 'failed' THEN 'unknown'
+                ELSE stage
+            END
+            WHERE stage = 'queued' AND status != 'running'
             """
         )
         connection.execute(
@@ -89,7 +126,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '1')
+            VALUES ('schema_version', '2')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -106,7 +143,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("1",)
+    return row == ("2",)
 
 
 def latest_snapshot(path: Path, target_date: date) -> SnapshotRow | None:
@@ -161,7 +198,13 @@ def snapshot_exists(path: Path, target_date: date) -> bool:
     return row is not None
 
 
-def create_task_run(path: Path, target_date: date, started_at: datetime) -> int:
+def create_task_run(
+    path: Path,
+    target_date: date,
+    started_at: datetime,
+    *,
+    trigger_method: str = "manual",
+) -> int:
     with sqlite3.connect(path) as connection:
         cursor = connection.execute(
             """
@@ -169,11 +212,12 @@ def create_task_run(path: Path, target_date: date, started_at: datetime) -> int:
                 trigger_method,
                 target_date,
                 started_at,
-                status
+                status,
+                stage
             )
-            VALUES (?, ?, ?, 'running')
+            VALUES (?, ?, ?, 'running', 'queued')
             """,
-            ("manual", target_date.isoformat(), started_at.isoformat()),
+            (trigger_method, target_date.isoformat(), started_at.isoformat()),
         )
         return cast(int, cursor.lastrowid)
 
@@ -185,6 +229,7 @@ def publish_snapshot(
     target_date: date,
     payload_json: str,
     published_at: datetime,
+    simulate_failure: bool = False,
 ) -> None:
     with sqlite3.connect(path) as connection:
         with connection:
@@ -202,23 +247,97 @@ def publish_snapshot(
                 """,
                 (target_date.isoformat(), payload_json, published_at.isoformat()),
             )
+            if simulate_failure:
+                raise RuntimeError("模拟事务发布失败")
             connection.execute(
                 """
                 UPDATE task_runs
-                SET finished_at = ?, status = 'succeeded'
+                SET finished_at = ?, status = 'succeeded', stage = 'completed',
+                    error_summary = NULL
                 WHERE id = ?
                 """,
                 (published_at.isoformat(), task_id),
             )
 
 
-def fail_task_run(path: Path, task_id: int, finished_at: datetime) -> None:
+def update_task_stage(path: Path, task_id: int, stage: str) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE task_runs SET stage = ? WHERE id = ?",
+            (stage, task_id),
+        )
+
+
+def fail_task_run(
+    path: Path,
+    task_id: int,
+    finished_at: datetime,
+    *,
+    stage: str,
+    error_summary: str,
+) -> None:
     with sqlite3.connect(path) as connection:
         connection.execute(
             """
             UPDATE task_runs
-            SET finished_at = ?, status = 'failed'
+            SET finished_at = ?, status = 'failed', stage = ?, error_summary = ?
             WHERE id = ?
             """,
-            (finished_at.isoformat(), task_id),
+            (finished_at.isoformat(), stage, error_summary, task_id),
         )
+
+
+def task_runs(path: Path, *, limit: int = 20) -> list[TaskRunRow]:
+    with sqlite3.connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, trigger_method, target_date, started_at, finished_at,
+                   stage, status, error_summary
+            FROM task_runs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        TaskRunRow(
+            id=cast(int, row[0]),
+            trigger_method=cast(str, row[1]),
+            target_date=date.fromisoformat(cast(str, row[2])),
+            started_at=datetime.fromisoformat(cast(str, row[3])),
+            finished_at=(
+                datetime.fromisoformat(cast(str, row[4])) if row[4] else None
+            ),
+            stage=cast(str, row[5]),
+            status=cast(str, row[6]),
+            error_summary=cast(str | None, row[7]),
+        )
+        for row in rows
+    ]
+
+
+def latest_task_run(path: Path, target_date: date) -> TaskRunRow | None:
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, trigger_method, target_date, started_at, finished_at,
+                   stage, status, error_summary
+            FROM task_runs
+            WHERE target_date = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (target_date.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return TaskRunRow(
+        id=cast(int, row[0]),
+        trigger_method=cast(str, row[1]),
+        target_date=date.fromisoformat(cast(str, row[2])),
+        started_at=datetime.fromisoformat(cast(str, row[3])),
+        finished_at=datetime.fromisoformat(cast(str, row[4])) if row[4] else None,
+        stage=cast(str, row[5]),
+        status=cast(str, row[6]),
+        error_summary=cast(str | None, row[7]),
+    )

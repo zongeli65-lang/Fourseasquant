@@ -34,6 +34,7 @@ export default defineConfig({
     env: {
       FOURSEASQUANT_DB_PATH: testDatabase,
       FOURSEASQUANT_RELOAD: "0",
+      FOURSEASQUANT_ENABLE_FAILURE_SIMULATION: "1",
     },
   },
 });

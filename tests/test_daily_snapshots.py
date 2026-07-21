@@ -8,14 +8,19 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from pytest import MonkeyPatch
 
-from fourseasquant.daily_snapshots import execute_daily_task
-from fourseasquant.database import initialize_database, latest_snapshot
+from fourseasquant.daily_snapshots import PreparedMarket, execute_daily_task
+from fourseasquant.database import initialize_database, latest_snapshot, latest_task_run
 from fourseasquant.settings import SettingsUpdate, save_settings
 
 
-def invalid_snapshot(_: date, __: Path) -> Mapping[str, object]:
+def invalid_snapshot(_: date, __: PreparedMarket) -> Mapping[str, object]:
     return {"source": "simulation", "label": "缺少种子字段"}
+
+
+def broken_strategy(_: date, __: PreparedMarket) -> Mapping[str, object]:
+    raise ValueError("策略实现异常")
 
 
 def test_invalid_snapshot_marks_task_failed_without_publishing(tmp_path: Path) -> None:
@@ -26,7 +31,7 @@ def test_invalid_snapshot_marks_task_failed_without_publishing(tmp_path: Path) -
         execute_daily_task(
             date(2026, 7, 21),
             path=database,
-            snapshot_factory=invalid_snapshot,
+            strategy_stage_factory=invalid_snapshot,
         )
 
     with sqlite3.connect(database) as connection:
@@ -70,3 +75,47 @@ def test_default_factory_reads_settings_from_the_selected_database(tmp_path: Pat
     payload = json.loads(published.payload_json)
     assert payload["source"] == "simulation_conservative"
     assert payload["strategy_performance"]["benchmark_label"] == "中证 500"
+
+
+def test_real_strategy_exception_is_recorded_in_strategy_stage(tmp_path: Path) -> None:
+    database = tmp_path / "strategy-error.db"
+    initialize_database(database)
+
+    with pytest.raises(ValueError, match="策略实现异常"):
+        execute_daily_task(
+            date(2026, 7, 21),
+            path=database,
+            strategy_stage_factory=broken_strategy,
+        )
+
+    task = latest_task_run(database, date(2026, 7, 21))
+    assert task is not None
+    assert task.status == "failed"
+    assert task.stage == "strategy_run"
+
+
+def test_logging_failure_never_changes_success_or_recorded_failure(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "logging-failure.db"
+    initialize_database(database)
+
+    def broken_log(**_: object) -> None:
+        raise OSError("日志目录不可写")
+
+    monkeypatch.setattr("fourseasquant.daily_snapshots.log_task_event", broken_log)
+
+    success = execute_daily_task(date(2026, 7, 20), path=database)
+    failure = execute_daily_task(
+        date(2026, 7, 21),
+        path=database,
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert success.status == "succeeded"
+    assert failure.status == "failed"
+    assert latest_snapshot(database, date(2026, 7, 20)) is not None
+    failed_task = latest_task_run(database, date(2026, 7, 21))
+    assert failed_task is not None
+    assert failed_task.status == "failed"

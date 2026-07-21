@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -40,6 +41,10 @@ class LocalApplicationTest(unittest.TestCase):
         self.environment["FOURSEASQUANT_DB_PATH"] = str(
             Path(self.temporary_directory.name) / "application.db"
         )
+        self.environment["FOURSEASQUANT_LOG_PATH"] = str(
+            Path(self.temporary_directory.name) / "tasks.jsonl"
+        )
+        self.environment["FOURSEASQUANT_ENABLE_FAILURE_SIMULATION"] = "1"
         self.process = self.start_application()
 
     def start_application(self) -> subprocess.Popen[str]:
@@ -117,9 +122,112 @@ class LocalApplicationTest(unittest.TestCase):
                 "actual_data_date": None,
                 "last_updated_at": None,
                 "task_status": "not_run",
+                "failure": None,
                 "snapshot": None,
             },
         )
+
+    def test_failures_preserve_last_snapshot_and_retry_publishes_atomically(self) -> None:
+        self.run_task("2026-07-20")
+        stages = [
+            ("market_prepare", "市场准备"),
+            ("strategy_run", "策略运行"),
+            ("output_validation", "输出校验"),
+            ("transactional_publish", "事务发布"),
+        ]
+        for stage, label in stages:
+            task = self.run_task("2026-07-21", simulate_failure_stage=stage)
+            self.assertEqual(task["status"], "failed")
+            self.assertEqual(task["stage"], stage)
+
+            with urlopen(
+                f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+                timeout=1,
+            ) as response:
+                dashboard = json.load(response)
+            self.assertEqual(dashboard["task_status"], "failed")
+            self.assertEqual(dashboard["actual_data_date"], "2026-07-20")
+            self.assertEqual(dashboard["snapshot"]["seed"], 20260720)
+            self.assertEqual(dashboard["failure"]["stage_label"], label)
+            self.assertIsNotNone(dashboard["failure"]["failed_at"])
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/tasks/history?limit=10",
+            timeout=1,
+        ) as response:
+            history = json.load(response)
+        failures = [item for item in history if item["status"] == "failed"]
+        self.assertEqual(len(failures), 4)
+        self.assertTrue(
+            all(
+                item["target_date"] == "2026-07-21"
+                and item["trigger_method"] == "manual"
+                and item["started_at"]
+                and item["finished_at"]
+                and item["error_summary"]
+                for item in failures
+            )
+        )
+
+        retry_request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily/retry",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(retry_request, timeout=2) as response:
+            retry = json.load(response)
+        self.assertEqual(retry["status"], "succeeded")
+        self.assertEqual(retry["trigger_method"], "retry")
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            dashboard = json.load(response)
+        self.assertEqual(dashboard["actual_data_date"], "2026-07-21")
+        self.assertEqual(dashboard["task_status"], "succeeded")
+        self.assertIsNone(dashboard["failure"])
+        successful_snapshot = dashboard["snapshot"]
+
+        duplicate = self.run_task("2026-07-21")
+        self.assertEqual(duplicate["status"], "succeeded")
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            repeated_dashboard = json.load(response)
+        self.assertEqual(repeated_dashboard["snapshot"], successful_snapshot)
+
+        log_text = Path(self.environment["FOURSEASQUANT_LOG_PATH"]).read_text()
+        self.assertIn('"event": "task_failed"', log_text)
+        self.assertIn('"stage": "transactional_publish"', log_text)
+        self.assertNotIn("token", log_text.lower())
+
+    def run_task(
+        self,
+        target_date: str,
+        *,
+        simulate_failure_stage: str | None = None,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {"target_date": target_date}
+        if simulate_failure_stage:
+            payload["simulate_failure_stage"] = simulate_failure_stage
+        endpoint = (
+            "/api/testing/tasks/daily"
+            if simulate_failure_stage
+            else "/api/tasks/daily"
+        )
+        if simulate_failure_stage:
+            payload = {"target_date": target_date, "stage": simulate_failure_stage}
+        request = Request(
+            f"http://127.0.0.1:{self.port}{endpoint}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2) as response:
+            return cast(dict[str, object], json.load(response))
 
     def test_user_can_run_and_publish_a_deterministic_daily_snapshot(self) -> None:
         request = Request(

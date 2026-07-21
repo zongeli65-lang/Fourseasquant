@@ -41,7 +41,24 @@ type DashboardData = {
   actual_data_date: string | null;
   last_updated_at: string | null;
   task_status: TaskStatus;
+  failure: {
+    stage: string;
+    stage_label: string;
+    failed_at: string;
+    error_summary: string;
+  } | null;
   snapshot: DashboardSnapshot | null;
+};
+
+type TaskHistoryItem = {
+  id: number;
+  trigger_method: string;
+  target_date: string;
+  started_at: string;
+  finished_at: string | null;
+  stage_label: string;
+  status: string;
+  error_summary: string | null;
 };
 
 type DashboardState =
@@ -123,6 +140,7 @@ export function App() {
   const [dashboard, setDashboard] = useState<DashboardState>({ kind: "loading" });
   const [isRunning, setIsRunning] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [taskHistory, setTaskHistory] = useState<TaskHistoryItem[]>([]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -171,10 +189,21 @@ export function App() {
     return () => controller.abort();
   }, [targetDate]);
 
-  async function runDailyTask() {
+  async function refreshTaskHistory() {
+    const response = await fetch("/api/tasks/history?limit=10");
+    if (response.ok) {
+      setTaskHistory((await response.json()) as TaskHistoryItem[]);
+    }
+  }
+
+  useEffect(() => {
+    void refreshTaskHistory().catch(() => undefined);
+  }, []);
+
+  async function runDailyTask(retry = false) {
     setIsRunning(true);
     try {
-      const response = await fetch("/api/tasks/daily", {
+      const response = await fetch(retry ? "/api/tasks/daily/retry" : "/api/tasks/daily", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_date: targetDate }),
@@ -182,11 +211,20 @@ export function App() {
       if (!response.ok) {
         throw new Error(`每日任务接口返回 ${response.status}`);
       }
-      const data = await fetchDashboard(targetDate);
-      setDashboard({ kind: "ready", data });
     } catch {
-      setDashboard({ kind: "error" });
+      // 失败状态已由后端记录；下面统一重新读取，继续保留最近成功快照。
     } finally {
+      try {
+        const data = await fetchDashboard(targetDate);
+        setDashboard({ kind: "ready", data });
+      } catch {
+        setDashboard({ kind: "error" });
+      }
+      try {
+        await refreshTaskHistory();
+      } catch {
+        // 历史是辅助视图，读取失败不能隐藏已经成功读取的仪表盘。
+      }
       setIsRunning(false);
     }
   }
@@ -205,6 +243,27 @@ export function App() {
           <div className="local-only">本机专用 · 日频</div>
         </div>
       </header>
+
+      {dashboard.kind === "ready" && dashboard.data.failure && (
+        <section className="failure-banner" role="alert" aria-labelledby="failure-title">
+          <div>
+            <p className="section-kicker">最近一次任务</p>
+            <h2 id="failure-title">今日更新失败</h2>
+            <p>
+              继续展示 {dashboard.data.actual_data_date ?? "最近一次"} 的完整成功结果，
+              本次失败未覆盖已发布快照。
+            </p>
+          </div>
+          <dl>
+            <div><dt>失败阶段</dt><dd data-testid="failure-stage">{dashboard.data.failure.stage_label}</dd></div>
+            <div><dt>失败时间</dt><dd>{new Date(dashboard.data.failure.failed_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}</dd></div>
+            <div><dt>错误摘要</dt><dd>{dashboard.data.failure.error_summary}</dd></div>
+          </dl>
+          <button type="button" disabled={isRunning} onClick={() => void runDailyTask(true)}>
+            {isRunning ? "正在重新运行…" : "重新运行今日任务"}
+          </button>
+        </section>
+      )}
 
       <section className="status-panel" aria-labelledby="application-status">
         <div>
@@ -226,6 +285,7 @@ export function App() {
             <input
               type="date"
               value={targetDate}
+              disabled={isRunning}
               onChange={(event) => setTargetDate(event.target.value)}
             />
           </label>
@@ -279,11 +339,42 @@ export function App() {
               <button
                 type="button"
                 disabled={isRunning}
-                onClick={() => void runDailyTask()}
+                onClick={() => void runDailyTask(false)}
               >
                 {isRunning ? "正在运行…" : "运行目标日期任务"}
               </button>
             </div>
+          </div>
+        )}
+      </section>
+
+      <section className="task-history" aria-labelledby="task-history-title">
+        <div className="snapshot-heading">
+          <div>
+            <p className="section-kicker">运行记录</p>
+            <h2 id="task-history-title">任务历史</h2>
+          </div>
+          <span>最近 {taskHistory.length} 条</span>
+        </div>
+        {taskHistory.length === 0 ? (
+          <p className="snapshot-message">尚无任务记录。</p>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead><tr><th>目标日期</th><th>触发</th><th>开始</th><th>结束</th><th>阶段</th><th>状态 / 摘要</th></tr></thead>
+              <tbody>
+                {taskHistory.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.target_date}</td>
+                    <td>{({ manual: "手动", retry: "重试", backfill: "补算", scheduled: "定时" } as Record<string, string>)[item.trigger_method] ?? item.trigger_method}</td>
+                    <td>{new Date(item.started_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}</td>
+                    <td>{item.finished_at ? new Date(item.finished_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "—"}</td>
+                    <td>{item.stage_label}</td>
+                    <td className={item.status === "failed" ? "history-failed" : "history-succeeded"}>{item.status === "failed" ? `失败 · ${item.error_summary ?? "查看本机日志"}` : item.status === "succeeded" ? "成功" : "运行中"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

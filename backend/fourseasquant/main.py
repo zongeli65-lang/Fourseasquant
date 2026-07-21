@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -14,9 +14,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from fourseasquant.daily_snapshots import (
     DashboardResponse,
+    FailureStage,
+    TaskHistoryItem,
     TaskRunResponse,
     execute_daily_task,
     read_dashboard,
+    read_task_history,
 )
 from fourseasquant.database import (
     database_is_ready,
@@ -72,6 +75,11 @@ class DailyTaskRequest(BaseModel):
     target_date: date
 
 
+class FailureSimulationRequest(BaseModel):
+    target_date: date
+    stage: FailureStage
+
+
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     ready = database_is_ready(database_path())
@@ -90,6 +98,33 @@ def dashboard(target_date: date) -> DashboardResponse:
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)
 def run_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
     return execute_daily_task(request.target_date)
+
+
+if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
+
+    @app.post(
+        "/api/testing/tasks/daily",
+        response_model=TaskRunResponse,
+        status_code=201,
+        include_in_schema=False,
+    )
+    def simulate_daily_task_failure(
+        request: FailureSimulationRequest,
+    ) -> TaskRunResponse:
+        return execute_daily_task(
+            request.target_date,
+            simulate_failure_stage=request.stage,
+        )
+
+
+@app.post("/api/tasks/daily/retry", response_model=TaskRunResponse, status_code=201)
+def retry_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
+    return execute_daily_task(request.target_date, trigger_method="retry")
+
+
+@app.get("/api/tasks/history", response_model=list[TaskHistoryItem])
+def task_history(limit: int = Query(default=20, ge=1, le=100)) -> list[TaskHistoryItem]:
+    return read_task_history(limit=limit)
 
 
 def review_database_path(review_date: date) -> Path:

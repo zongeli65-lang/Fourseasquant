@@ -229,6 +229,109 @@ h2 {
   color: #f06f7d;
 }
 
+.failure-banner {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.2fr) minmax(520px, 2fr) auto;
+  align-items: center;
+  gap: 28px;
+  margin: 18px 0;
+  padding: 22px 24px;
+  border: 1px solid rgba(240, 79, 96, 0.64);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(91, 22, 34, 0.92), rgba(35, 15, 27, 0.96));
+  box-shadow: 0 16px 42px rgba(58, 7, 18, 0.28);
+}
+
+.failure-banner h2 {
+  margin-bottom: 7px;
+  color: #ffbdc4;
+  font-size: 21px;
+}
+
+.failure-banner p {
+  margin-bottom: 0;
+  color: #c8959e;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.failure-banner dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 18px;
+  margin: 0;
+}
+
+.failure-banner dt {
+  margin-bottom: 6px;
+  color: #916a73;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.failure-banner dd {
+  margin: 0;
+  color: #f2d9dd;
+  font-size: 12px;
+}
+
+.failure-banner button {
+  padding: 11px 15px;
+  border: 1px solid #f06f7d;
+  border-radius: 8px;
+  color: #fff2f4;
+  background: #8a2635;
+  cursor: pointer;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.task-history {
+  margin-bottom: 18px;
+  padding: 22px 24px;
+  border: 1px solid #1e2a3d;
+  border-radius: 14px;
+  background: rgba(13, 21, 36, 0.9);
+}
+
+.task-history .snapshot-heading > span {
+  color: #63748e;
+  font-size: 11px;
+}
+
+.task-history .table-scroll {
+  overflow-x: auto;
+  padding-top: 14px;
+}
+
+.task-history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.task-history th,
+.task-history td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #1d2a3e;
+  color: #9eacc0;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.task-history th {
+  color: #62738d;
+  font-size: 9px;
+}
+
+.task-history .history-failed {
+  color: #f4838f;
+}
+
+.task-history .history-succeeded {
+  color: #62d4a3;
+}
+
 .market-overview {
   margin-bottom: 18px;
   padding: 24px;
