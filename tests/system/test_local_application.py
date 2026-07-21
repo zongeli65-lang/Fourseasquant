@@ -214,6 +214,37 @@ class LocalApplicationTest(unittest.TestCase):
         self.assertEqual(overview["eligible_security_count"], 5)
         self.assertNotIn("sentiment_score", overview)
 
+    def test_sector_rankings_are_sorted_and_share_the_published_snapshot(self) -> None:
+        request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2):
+            pass
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            sectors = json.load(response)["snapshot"]["sector_performance"]
+
+        for category in ("industries", "concepts"):
+            ranking = sectors[category]
+            self.assertEqual(len(ranking["leaders"]), 10)
+            self.assertEqual(len(ranking["laggards"]), 10)
+            leader_values = [item["change_pct"] for item in ranking["leaders"]]
+            laggard_values = [item["change_pct"] for item in ranking["laggards"]]
+            self.assertEqual(leader_values, sorted(leader_values, reverse=True))
+            self.assertEqual(laggard_values, sorted(laggard_values))
+            heatmap_values = {
+                item["name"]: item["change_pct"]
+                for item in ranking["heatmap_moves"]
+            }
+            for item in ranking["leaders"] + ranking["laggards"]:
+                self.assertEqual(heatmap_values[item["name"]], item["change_pct"])
+
     def test_root_page_exposes_the_desktop_dashboard_shell(self) -> None:
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:
             page = response.read().decode("utf-8")

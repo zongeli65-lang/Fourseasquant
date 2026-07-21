@@ -1,3 +1,5 @@
+import { movementTone, signedPercentage } from "./marketFormatting";
+
 export type MarketOverviewData = {
   indices: Array<{ name: string; change_pct: number }>;
   breadth: {
@@ -23,21 +25,6 @@ export type MarketOverviewData = {
   };
   eligible_security_count: number;
 };
-
-function signedPercentage(value: number): string {
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2)}%`;
-}
-
-function movementTone(value: number): string {
-  if (value > 0) {
-    return "positive";
-  }
-  if (value < 0) {
-    return "negative";
-  }
-  return "neutral";
-}
 
 type BreadthItemProps = {
   label: string;

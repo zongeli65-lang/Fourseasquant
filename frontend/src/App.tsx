@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { MarketOverview, type MarketOverviewData } from "./MarketOverview";
+import {
+  SectorPerformance,
+  type SectorPerformanceData,
+} from "./SectorPerformance";
 
 type HealthStatus = {
   application: string;
@@ -20,6 +24,7 @@ type DashboardSnapshot = {
   label: string;
   seed: number;
   market_overview: MarketOverviewData;
+  sector_performance: SectorPerformanceData;
 };
 
 type DashboardData = {
@@ -50,7 +55,6 @@ async function fetchDashboard(
 }
 
 const dashboardSections = [
-  ["板块与概念", "行业与概念排行榜及热力图将在后续切片接入"],
   ["策略表现", "净值、回撤与基准比较将在后续切片接入"],
   ["持仓与交易", "持仓、交易和收益贡献将在后续切片接入"],
   ["复盘记录", "每日笔记与标签将在后续切片接入"],
@@ -280,6 +284,14 @@ export function App() {
       {dashboard.kind === "ready" && dashboard.data.snapshot && (
         <MarketOverview data={dashboard.data.snapshot.market_overview} />
       )}
+
+      <SectorPerformance
+        data={
+          dashboard.kind === "ready"
+            ? (dashboard.data.snapshot?.sector_performance ?? null)
+            : null
+        }
+      />
 
       <section className="section-grid" aria-label="仪表盘模块">
         {dashboardSections.map(([title, description]) => (
