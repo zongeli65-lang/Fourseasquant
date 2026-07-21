@@ -10,7 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -367,6 +367,98 @@ class LocalApplicationTest(unittest.TestCase):
             snapshot["strategy_performance"]["daily_summary"]["strategy_return_pct"],
             places=4,
         )
+
+    def test_settings_persist_and_affect_the_next_daily_task(self) -> None:
+        baseline_request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(baseline_request, timeout=2):
+            pass
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            baseline = json.load(response)["snapshot"]
+
+        update_request = Request(
+            f"http://127.0.0.1:{self.port}/api/settings",
+            data=json.dumps(
+                {
+                    "auto_update_time": "16:45",
+                    "benchmark": "中证 500",
+                    "data_adapter": "simulation_conservative",
+                    "new_stock_exclusion_days": 15,
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urlopen(update_request, timeout=2):
+            pass
+
+        self.restart_application()
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/settings", timeout=1
+        ) as response:
+            settings = json.load(response)
+
+        self.assertEqual(settings["auto_update_time"], "16:45")
+        self.assertEqual(settings["benchmark"], "中证 500")
+        self.assertEqual(settings["data_adapter"], "simulation_conservative")
+        self.assertEqual(settings["new_stock_exclusion_days"], 15)
+        self.assertNotIn("token", json.dumps(settings).lower())
+
+        task_request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(task_request, timeout=2):
+            pass
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            snapshot = json.load(response)["snapshot"]
+
+        self.assertEqual(snapshot["market_overview"]["eligible_security_count"], 6)
+        self.assertEqual(snapshot["source"], "simulation_conservative")
+        self.assertNotEqual(
+            snapshot["market_overview"]["turnover"]["amount_cny"],
+            baseline["market_overview"]["turnover"]["amount_cny"],
+        )
+        self.assertEqual(
+            snapshot["strategy_performance"]["benchmark_label"],
+            "中证 500",
+        )
+        self.assertNotEqual(
+            snapshot["strategy_performance"]["daily_summary"]["benchmark_return_pct"],
+            baseline["strategy_performance"]["daily_summary"]["benchmark_return_pct"],
+        )
+
+    def test_untrusted_host_cannot_modify_local_settings(self) -> None:
+        request = Request(
+            f"http://127.0.0.1:{self.port}/api/settings",
+            data=json.dumps(
+                {
+                    "auto_update_time": "16:45",
+                    "benchmark": "中证 500",
+                    "data_adapter": "simulation_conservative",
+                    "new_stock_exclusion_days": 15,
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Host": "evil.example"},
+            method="PUT",
+        )
+
+        with self.assertRaises(HTTPError) as error:
+            urlopen(request, timeout=2)
+
+        self.assertEqual(error.exception.code, 400)
 
     def test_root_page_exposes_the_desktop_dashboard_shell(self) -> None:
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:

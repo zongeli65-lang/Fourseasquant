@@ -66,6 +66,28 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                auto_update_time TEXT NOT NULL,
+                benchmark TEXT NOT NULL,
+                data_adapter TEXT NOT NULL,
+                new_stock_exclusion_days INTEGER NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO app_settings (
+                id,
+                auto_update_time,
+                benchmark,
+                data_adapter,
+                new_stock_exclusion_days
+            ) VALUES (1, '16:30', '沪深 300', 'simulation', 20)
+            """
+        )
+        connection.execute(
+            """
             INSERT INTO app_metadata (key, value)
             VALUES ('schema_version', '1')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value

@@ -73,25 +73,30 @@ class MarketOverview(BaseModel):
     eligible_security_count: int
 
 
-def is_eligible_main_board_security(observation: SecurityObservation) -> bool:
+def is_eligible_main_board_security(
+    observation: SecurityObservation,
+    new_stock_exclusion_days: int,
+) -> bool:
     return (
         observation.board
         in {TradingBoard.SHANGHAI_MAIN, TradingBoard.SHENZHEN_MAIN}
         and not observation.is_st
         and not observation.is_suspended
         and not observation.is_delisting
-        and observation.listing_trading_days >= 20
+        and observation.listing_trading_days >= new_stock_exclusion_days
     )
 
 
 def calculate_market_overview(
     observations: list[SecurityObservation],
     indices: list[IndexMove],
+    *,
+    new_stock_exclusion_days: int = 20,
 ) -> MarketOverview:
     eligible = [
         observation
         for observation in observations
-        if is_eligible_main_board_security(observation)
+        if is_eligible_main_board_security(observation, new_stock_exclusion_days)
     ]
     security_count = len(eligible)
     advancers = sum(observation.change_pct > 0 for observation in eligible)

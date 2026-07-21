@@ -10,6 +10,7 @@ import {
 } from "./StrategyPerformance";
 import { ReviewNotes } from "./ReviewNotes";
 import { PortfolioReview, type PortfolioReviewData } from "./PortfolioReview";
+import { SettingsPanel } from "./SettingsPanel";
 
 type HealthStatus = {
   application: string;
@@ -121,6 +122,7 @@ export function App() {
   const [targetDate, setTargetDate] = useState(beijingDate);
   const [dashboard, setDashboard] = useState<DashboardState>({ kind: "loading" });
   const [isRunning, setIsRunning] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -198,7 +200,10 @@ export function App() {
           <p className="eyebrow">A 股市场与策略复盘</p>
           <h1>Fourseasquant</h1>
         </div>
-        <div className="local-only">本机专用 · 日频</div>
+        <div className="topbar-actions">
+          <button type="button" onClick={() => setSettingsOpen(true)}>设置</button>
+          <div className="local-only">本机专用 · 日频</div>
+        </div>
       </header>
 
       <section className="status-panel" aria-labelledby="application-status">
@@ -308,6 +313,8 @@ export function App() {
           dashboard.kind === "ready" ? dashboard.data.actual_data_date : null
         }
       />
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
     </main>
   );

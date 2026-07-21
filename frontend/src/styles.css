@@ -104,6 +104,23 @@ h2 {
   background: rgba(17, 27, 44, 0.72);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-actions > button {
+  padding: 9px 13px;
+  border: 1px solid #2a3850;
+  border-radius: 8px;
+  color: #a8b7cb;
+  background: #111b2c;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .status-panel {
   margin: 26px 0 18px;
   padding: 22px 24px;
@@ -816,6 +833,110 @@ h2 {
 .data-table td strong,
 .data-table td span {
   display: block;
+}
+
+.settings-layer {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+}
+
+.settings-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgba(2, 6, 12, 0.66);
+  cursor: default;
+}
+
+.settings-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 420px;
+  height: 100%;
+  padding: 28px;
+  border-left: 1px solid #293a54;
+  background: #0a1220;
+  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.32);
+}
+
+.settings-panel header,
+.settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-panel header h2 {
+  margin-bottom: 0;
+  font-size: 20px;
+}
+
+.settings-panel header > button {
+  border: 0;
+  color: #8192aa;
+  background: transparent;
+  cursor: pointer;
+  font-size: 26px;
+}
+
+.settings-message {
+  margin-top: 30px;
+  color: #71829a;
+}
+
+.settings-form {
+  display: grid;
+  gap: 20px;
+  margin-top: 30px;
+}
+
+.settings-form label > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #7b8ca4;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.settings-form input,
+.settings-form select {
+  width: 100%;
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid #2a3a53;
+  border-radius: 8px;
+  color: #dce5f1;
+  background: #0d1828;
+  color-scheme: dark;
+}
+
+.settings-security-note {
+  padding: 13px;
+  border: 1px solid #25354d;
+  border-radius: 8px;
+  color: #65768e;
+  background: #0d1727;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.settings-actions {
+  margin-top: 8px;
+  color: #71829a;
+  font-size: 10px;
+}
+
+.settings-actions button {
+  height: 38px;
+  padding: 0 15px;
+  border: 1px solid #315d92;
+  border-radius: 7px;
+  color: #eaf3ff;
+  background: #173b64;
+  cursor: pointer;
 }
 
 .data-table td strong {

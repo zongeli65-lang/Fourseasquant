@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from fourseasquant.daily_snapshots import (
     DashboardResponse,
@@ -29,6 +30,12 @@ from fourseasquant.review_notes import (
     read_review,
     save_review,
 )
+from fourseasquant.settings import (
+    SettingsResponse,
+    SettingsUpdate,
+    read_settings,
+    save_settings,
+)
 
 
 APPLICATION_NAME = "Fourseasquant"
@@ -41,6 +48,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=APPLICATION_NAME, lifespan=lifespan)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["127.0.0.1", "localhost", "testserver"],
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -96,6 +107,16 @@ def get_review(review_date: date) -> ReviewResponse:
 @app.put("/api/reviews/{review_date}", response_model=ReviewResponse)
 def put_review(review_date: date, request: ReviewWriteRequest) -> ReviewResponse:
     return save_review(review_database_path(review_date), review_date, request)
+
+
+@app.get("/api/settings", response_model=SettingsResponse)
+def get_settings() -> SettingsResponse:
+    return read_settings(database_path())
+
+
+@app.put("/api/settings", response_model=SettingsResponse)
+def put_settings(settings: SettingsUpdate) -> SettingsResponse:
+    return save_settings(database_path(), settings)
 
 
 FRONTEND_DISTRIBUTION = Path(__file__).resolve().parents[2] / "frontend" / "dist"

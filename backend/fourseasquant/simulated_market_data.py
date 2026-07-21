@@ -43,7 +43,11 @@ SECTOR_CHANGES = [
 ]
 
 
-def simulated_market_overview() -> MarketOverview:
+def simulated_market_overview(
+    new_stock_exclusion_days: int = 20,
+    *,
+    turnover_scale: float = 1.0,
+) -> MarketOverview:
     observations = [
         SecurityObservation(
             code="600001",
@@ -134,14 +138,26 @@ def simulated_market_overview() -> MarketOverview:
             average_turnover_20d_cny=100_000_000_000,
         ),
     ]
+    scaled_observations = [
+        observation.model_copy(
+            update={
+                "turnover_cny": observation.turnover_cny * turnover_scale,
+                "average_turnover_20d_cny": (
+                    observation.average_turnover_20d_cny * turnover_scale
+                ),
+            }
+        )
+        for observation in observations
+    ]
     return calculate_market_overview(
-        observations,
+        scaled_observations,
         [
             IndexMove(name="上证指数", change_pct=0.62),
             IndexMove(name="深证成指", change_pct=-0.31),
             IndexMove(name="创业板指", change_pct=0.18),
             IndexMove(name="沪深 300", change_pct=0.44),
         ],
+        new_stock_exclusion_days=new_stock_exclusion_days,
     )
 
 

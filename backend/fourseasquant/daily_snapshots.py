@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -29,10 +30,26 @@ from fourseasquant.strategy_performance import (
 from fourseasquant.simulated_strategy_data import simulated_strategy_performance
 from fourseasquant.portfolio_review import PortfolioReview
 from fourseasquant.simulated_portfolio_data import simulated_portfolio_review
+from fourseasquant.settings import read_settings
 
 
 TaskStatus = Literal["not_run", "running", "succeeded", "failed"]
-SnapshotFactory = Callable[[date], Mapping[str, object]]
+SnapshotFactory = Callable[[date, Path], Mapping[str, object]]
+
+
+@dataclass(frozen=True)
+class SimulationAdapterProfile:
+    label: str
+    turnover_scale: float
+    strategy_return_scale: float
+
+
+SIMULATION_ADAPTERS = {
+    "simulation": SimulationAdapterProfile("确定性模拟快照", 1.0, 1.0),
+    "simulation_conservative": SimulationAdapterProfile(
+        "保守模拟快照", 0.9, 0.75
+    ),
+}
 
 
 class MinimalSnapshot(BaseModel):
@@ -62,13 +79,22 @@ class TaskRunResponse(BaseModel):
     status: Literal["succeeded"]
 
 
-def simulated_snapshot(target_date: date) -> Mapping[str, object]:
-    strategy_performance = simulated_strategy_performance(target_date)
+def simulated_snapshot(target_date: date, path: Path) -> Mapping[str, object]:
+    settings = read_settings(path)
+    adapter = SIMULATION_ADAPTERS[settings.data_adapter]
+    strategy_performance = simulated_strategy_performance(
+        target_date,
+        settings.benchmark,
+        strategy_return_scale=adapter.strategy_return_scale,
+    )
     return {
-        "source": "simulation",
-        "label": "确定性模拟快照",
+        "source": settings.data_adapter,
+        "label": adapter.label,
         "seed": int(target_date.strftime("%Y%m%d")),
-        "market_overview": simulated_market_overview().model_dump(),
+        "market_overview": simulated_market_overview(
+            settings.new_stock_exclusion_days,
+            turnover_scale=adapter.turnover_scale,
+        ).model_dump(),
         "sector_performance": simulated_sector_performance().model_dump(),
         "strategy_performance": strategy_performance.model_dump(),
         "portfolio_review": simulated_portfolio_review(
@@ -111,7 +137,9 @@ def execute_daily_task(
     task_id = create_task_run(selected_path, target_date, started_at)
 
     try:
-        snapshot = MinimalSnapshot.model_validate(snapshot_factory(target_date))
+        snapshot = MinimalSnapshot.model_validate(
+            snapshot_factory(target_date, selected_path)
+        )
         finished_at = datetime.now(ZoneInfo("Asia/Shanghai"))
         payload_json = json.dumps(
             snapshot.model_dump(mode="json"), ensure_ascii=False, sort_keys=True
