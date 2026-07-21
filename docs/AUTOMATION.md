@@ -70,3 +70,5 @@ launchctl print gui/$(id -u)/com.fourseasquant.daily
 ```
 
 若状态不存在，重新执行 `install`。若修改过项目路径、Python 虚拟环境或自动更新时间，也应重新安装。所有令牌只应配置在本机安全环境中；LaunchAgent 文件、网页和日志均不得保存 Tushare Token（Tushare 访问令牌）或其他秘密。
+
+macOS 可能阻止后台进程访问 `Desktop`（桌面）等受隐私保护目录，表现为计划任务长期停在 Python 初始化且没有日志。遇到这种情况，应将实际运行副本放在允许后台访问的 `Documents`（文稿）目录后重新安装 LaunchAgent，或在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中明确授权所用 Python。本机当前计划任务使用 `/Users/lz666/Documents/quant/fourseasquant-t01` 运行副本；`/Users/lz666/Desktop/quant` 仍作为用户项目副本并与 GitHub 同步。
