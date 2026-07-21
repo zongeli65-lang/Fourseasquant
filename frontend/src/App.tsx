@@ -405,7 +405,16 @@ export function App() {
         }
       />
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onBackfillCompleted={() => {
+          void fetchDashboard(targetDate)
+            .then((data) => setDashboard({ kind: "ready", data }))
+            .catch(() => undefined);
+          void refreshTaskHistory().catch(() => undefined);
+        }}
+      />
 
     </main>
   );

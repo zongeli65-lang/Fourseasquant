@@ -33,7 +33,7 @@ from fourseasquant.strategy_performance import (
 from fourseasquant.simulated_strategy_data import simulated_strategy_performance
 from fourseasquant.portfolio_review import PortfolioReview
 from fourseasquant.simulated_portfolio_data import simulated_portfolio_review
-from fourseasquant.settings import read_settings
+from fourseasquant.settings import SettingsResponse, read_settings
 from fourseasquant.task_logging import log_task_event
 
 
@@ -135,8 +135,13 @@ class TaskHistoryItem(BaseModel):
     error_summary: str | None
 
 
-def prepare_simulated_market(target_date: date, path: Path) -> PreparedMarket:
-    settings = read_settings(path)
+def prepare_simulated_market(
+    target_date: date,
+    path: Path,
+    *,
+    settings_override: SettingsResponse | None = None,
+) -> PreparedMarket:
+    settings = settings_override or read_settings(path)
     adapter = SIMULATION_ADAPTERS[settings.data_adapter]
     return PreparedMarket(
         payload={
@@ -233,6 +238,7 @@ def execute_daily_task(
     strategy_stage_factory: StrategyStageFactory = run_simulated_strategy,
     trigger_method: TaskTrigger = "manual",
     simulate_failure_stage: FailureStage | None = None,
+    propagate_unexpected: bool = True,
 ) -> TaskRunResponse:
     selected_path = path or database_path()
     started_at = datetime.now(ZoneInfo("Asia/Shanghai"))
@@ -297,7 +303,7 @@ def execute_daily_task(
             trigger_method=trigger_method,
             error_type=type(error).__name__,
         )
-        if is_simulated:
+        if is_simulated or not propagate_unexpected:
             return TaskRunResponse(
                 id=task_id,
                 trigger_method=trigger_method,

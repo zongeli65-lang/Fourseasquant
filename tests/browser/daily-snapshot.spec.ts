@@ -114,4 +114,18 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await expect(page.getByTestId("task-status")).toHaveText("运行成功");
   await expect(page.getByTestId("actual-data-date")).toHaveText("2026-07-21");
   await expect(page.getByRole("heading", { name: "今日更新失败" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("补算开始日期").fill("2026-07-17");
+  await page.getByLabel("补算结束日期").fill("2026-07-21");
+  await page.getByRole("button", { name: "预览交易日" }).click();
+  await expect(page.getByTestId("backfill-preview-count")).toHaveText("预计处理 3 个交易日");
+  await page.getByRole("button", { name: "确认补算" }).click();
+  await expect(page.getByTestId("backfill-result")).toHaveText("补算完成：成功 3 日，失败 0 日。");
+  await expect(page.getByTestId("backfill-day-results").locator(":scope > div")).toHaveCount(3);
+  await page.getByRole("button", { name: "关闭设置" }).click();
+  await page.getByRole("textbox", { name: "目标日期" }).fill("2026-07-20");
+  await expect(page.getByRole("textbox", { name: "复盘笔记" })).toHaveValue(
+    "指数分化，关注主板成交持续性。",
+  );
 });

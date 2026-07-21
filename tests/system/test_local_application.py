@@ -204,6 +204,81 @@ class LocalApplicationTest(unittest.TestCase):
         self.assertIn('"stage": "transactional_publish"', log_text)
         self.assertNotIn("token", log_text.lower())
 
+    def test_backfill_previews_trading_days_and_preserves_manual_review(self) -> None:
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/backfill/preview?start_date=2026-07-17&end_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            preview = json.load(response)
+        self.assertEqual(preview["trading_day_count"], 3)
+        self.assertEqual(
+            preview["trading_days"],
+            ["2026-07-17", "2026-07-20", "2026-07-21"],
+        )
+
+        self.run_task("2026-07-20")
+        review_request = Request(
+            f"http://127.0.0.1:{self.port}/api/reviews/2026-07-20",
+            data=json.dumps({"note": "保留这条人工复盘", "tags": ["补算保护"]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urlopen(review_request, timeout=2):
+            pass
+
+        partial_request = Request(
+            f"http://127.0.0.1:{self.port}/api/testing/backfill",
+            data=json.dumps(
+                {
+                    "start_date": "2026-07-17",
+                    "end_date": "2026-07-21",
+                    "failure_date": "2026-07-20",
+                    "failure_stage": "strategy_run",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(partial_request, timeout=5) as response:
+            partial = json.load(response)
+        self.assertEqual(partial["total"], 3)
+        self.assertEqual(partial["succeeded"], 2)
+        self.assertEqual(partial["failed"], 1)
+        self.assertEqual(
+            [item["target_date"] for item in partial["results"] if item["status"] == "failed"],
+            ["2026-07-20"],
+        )
+
+        backfill_request = Request(
+            f"http://127.0.0.1:{self.port}/api/backfill",
+            data=json.dumps(
+                {"start_date": "2026-07-17", "end_date": "2026-07-21"}
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(backfill_request, timeout=5) as response:
+            repeated = json.load(response)
+        self.assertEqual(repeated["succeeded"], 3)
+        self.assertEqual(repeated["failed"], 0)
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/reviews/2026-07-20",
+            timeout=1,
+        ) as response:
+            review = json.load(response)
+        self.assertEqual(review["note"], "保留这条人工复盘")
+        self.assertEqual(review["tags"], ["补算保护"])
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/tasks/history?limit=20",
+            timeout=1,
+        ) as response:
+            history = json.load(response)
+        self.assertTrue(
+            any(item["trigger_method"] == "backfill" for item in history)
+        )
+
     def run_task(
         self,
         target_date: str,

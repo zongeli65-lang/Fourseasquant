@@ -963,6 +963,7 @@ h2 {
   border-left: 1px solid #293a54;
   background: #0a1220;
   box-shadow: -24px 0 60px rgba(0, 0, 0, 0.32);
+  overflow-y: auto;
 }
 
 .settings-panel header,
@@ -1040,6 +1041,89 @@ h2 {
   color: #eaf3ff;
   background: #173b64;
   cursor: pointer;
+}
+
+.backfill-settings {
+  margin-top: 10px;
+  padding-top: 24px;
+  border-top: 1px solid #223149;
+}
+
+.backfill-settings h3 {
+  margin: 0;
+  color: #d8e2ef;
+  font-size: 15px;
+}
+
+.backfill-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.backfill-summary,
+.backfill-result {
+  margin: 12px 0 0;
+  padding: 11px 12px;
+  border: 1px solid #25354d;
+  border-radius: 8px;
+  color: #7f91aa;
+  background: #0d1727;
+  font-size: 10px;
+}
+
+.backfill-result {
+  color: #62d4a3;
+}
+
+.backfill-day-results {
+  max-height: 220px;
+  margin-top: 10px;
+  border: 1px solid #25354d;
+  border-radius: 8px;
+  overflow-y: auto;
+}
+
+.backfill-day-results > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 11px;
+  border-bottom: 1px solid #1d2a3e;
+  color: #8192a9;
+  font-size: 10px;
+}
+
+.backfill-day-results > div:last-child {
+  border-bottom: 0;
+}
+
+.backfill-day-results strong {
+  font-size: 10px;
+}
+
+.backfill-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.backfill-buttons button {
+  padding: 9px 12px;
+  border: 1px solid #315d92;
+  border-radius: 7px;
+  color: #dce9f8;
+  background: #142e50;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.backfill-buttons button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .data-table td strong {

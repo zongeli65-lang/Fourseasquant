@@ -12,6 +12,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from fourseasquant.backfill import (
+    BackfillAlreadyRunning,
+    BackfillPreview,
+    BackfillRequest,
+    BackfillResponse,
+    execute_backfill,
+    preview_backfill,
+)
+
 from fourseasquant.daily_snapshots import (
     DashboardResponse,
     FailureStage,
@@ -80,6 +89,11 @@ class FailureSimulationRequest(BaseModel):
     stage: FailureStage
 
 
+class FailureBackfillRequest(BackfillRequest):
+    failure_date: date
+    failure_stage: FailureStage
+
+
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     ready = database_is_ready(database_path())
@@ -116,6 +130,24 @@ if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
             simulate_failure_stage=request.stage,
         )
 
+    @app.post(
+        "/api/testing/backfill",
+        response_model=BackfillResponse,
+        status_code=201,
+        include_in_schema=False,
+    )
+    def simulate_backfill_failure(
+        request: FailureBackfillRequest,
+    ) -> BackfillResponse:
+        try:
+            return execute_backfill(
+                request,
+                failure_date=request.failure_date,
+                failure_stage=request.failure_stage,
+            )
+        except BackfillAlreadyRunning as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
 
 @app.post("/api/tasks/daily/retry", response_model=TaskRunResponse, status_code=201)
 def retry_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
@@ -125,6 +157,22 @@ def retry_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
 @app.get("/api/tasks/history", response_model=list[TaskHistoryItem])
 def task_history(limit: int = Query(default=20, ge=1, le=100)) -> list[TaskHistoryItem]:
     return read_task_history(limit=limit)
+
+
+@app.get("/api/backfill/preview", response_model=BackfillPreview)
+def get_backfill_preview(start_date: date, end_date: date) -> BackfillPreview:
+    try:
+        return preview_backfill(start_date, end_date)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/backfill", response_model=BackfillResponse, status_code=201)
+def run_backfill(request: BackfillRequest) -> BackfillResponse:
+    try:
+        return execute_backfill(request)
+    except BackfillAlreadyRunning as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 def review_database_path(review_date: date) -> Path:
