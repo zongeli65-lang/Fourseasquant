@@ -41,4 +41,19 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await expect(page.getByTestId("sector-category-label")).toContainText("概念板块");
   await page.getByRole("button", { name: "热力图" }).click();
   await expect(page.getByTestId("sector-heatmap").locator("div")).toHaveCount(24);
+
+  await expect(page.getByRole("heading", { name: "策略业绩复盘" })).toBeVisible();
+  await expect(page.getByText("演示策略数据")).toBeVisible();
+  await expect(page.getByTestId("strategy-daily-return")).toBeVisible();
+  await expect(page.getByTestId("benchmark-daily-return")).toBeVisible();
+  await expect(page.getByTestId("excess-daily-return")).toBeVisible();
+  await expect(page.getByTestId("nav-chart")).toBeVisible();
+  await expect(page.getByTestId("drawdown-chart")).toBeVisible();
+  await expect(page.getByTestId("strategy-statistics")).toContainText("夏普比率");
+  const allRangeStatistics = await page.getByTestId("strategy-statistics").textContent();
+  await page.getByRole("button", { name: "近 3 月" }).click();
+  await expect(page.getByTestId("selected-range")).toHaveText("近 3 月");
+  await expect(page.getByTestId("strategy-statistics")).not.toHaveText(
+    allRangeStatistics ?? "",
+  );
 });

@@ -4,6 +4,10 @@ import {
   SectorPerformance,
   type SectorPerformanceData,
 } from "./SectorPerformance";
+import {
+  StrategyPerformance,
+  type StrategyPerformanceData,
+} from "./StrategyPerformance";
 
 type HealthStatus = {
   application: string;
@@ -25,6 +29,7 @@ type DashboardSnapshot = {
   seed: number;
   market_overview: MarketOverviewData;
   sector_performance: SectorPerformanceData;
+  strategy_performance: StrategyPerformanceData;
 };
 
 type DashboardData = {
@@ -55,7 +60,6 @@ async function fetchDashboard(
 }
 
 const dashboardSections = [
-  ["策略表现", "净值、回撤与基准比较将在后续切片接入"],
   ["持仓与交易", "持仓、交易和收益贡献将在后续切片接入"],
   ["复盘记录", "每日笔记与标签将在后续切片接入"],
 ] as const;
@@ -292,6 +296,10 @@ export function App() {
             : null
         }
       />
+
+      {dashboard.kind === "ready" && dashboard.data.snapshot && (
+        <StrategyPerformance data={dashboard.data.snapshot.strategy_performance} />
+      )}
 
       <section className="section-grid" aria-label="仪表盘模块">
         {dashboardSections.map(([title, description]) => (

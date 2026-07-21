@@ -245,6 +245,45 @@ class LocalApplicationTest(unittest.TestCase):
             for item in ranking["leaders"] + ranking["laggards"]:
                 self.assertEqual(heatmap_values[item["name"]], item["change_pct"])
 
+    def test_strategy_snapshot_contains_three_year_daily_history(self) -> None:
+        request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2):
+            pass
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            strategy = json.load(response)["snapshot"]["strategy_performance"]
+
+        self.assertTrue(strategy["is_demo"])
+        self.assertEqual(strategy["benchmark_label"], "沪深 300")
+        self.assertEqual(strategy["points"][-1]["date"], "2026-07-21")
+        self.assertGreaterEqual(len(strategy["points"]), 720)
+        self.assertLessEqual(len(strategy["points"]), 740)
+        point_dates = {point["date"] for point in strategy["points"]}
+        self.assertNotIn("2024-02-12", point_dates)
+        self.assertNotIn("2025-10-01", point_dates)
+        self.assertNotIn("2026-02-16", point_dates)
+        self.assertEqual(
+            strategy["daily_summary"]["excess_return_pct"],
+            round(
+                strategy["daily_summary"]["strategy_return_pct"]
+                - strategy["daily_summary"]["benchmark_return_pct"],
+                4,
+            ),
+        )
+        self.assertLessEqual(strategy["statistics"]["max_drawdown_pct"], 0)
+        self.assertNotEqual(
+            strategy["range_statistics"]["all"],
+            strategy["range_statistics"]["quarter"],
+        )
+
     def test_root_page_exposes_the_desktop_dashboard_shell(self) -> None:
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:
             page = response.read().decode("utf-8")

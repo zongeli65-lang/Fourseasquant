@@ -23,6 +23,10 @@ from fourseasquant.simulated_market_data import (
     simulated_market_overview,
     simulated_sector_performance,
 )
+from fourseasquant.strategy_performance import (
+    StrategyPerformance,
+)
+from fourseasquant.simulated_strategy_data import simulated_strategy_performance
 
 
 TaskStatus = Literal["not_run", "running", "succeeded", "failed"]
@@ -35,6 +39,7 @@ class MinimalSnapshot(BaseModel):
     seed: int
     market_overview: MarketOverview
     sector_performance: SectorPerformance
+    strategy_performance: StrategyPerformance
 
 
 class DashboardResponse(BaseModel):
@@ -61,6 +66,7 @@ def simulated_snapshot(target_date: date) -> Mapping[str, object]:
         "seed": int(target_date.strftime("%Y%m%d")),
         "market_overview": simulated_market_overview().model_dump(),
         "sector_performance": simulated_sector_performance().model_dump(),
+        "strategy_performance": simulated_strategy_performance(target_date).model_dump(),
     }
 
 
@@ -100,7 +106,7 @@ def execute_daily_task(
         snapshot = MinimalSnapshot.model_validate(snapshot_factory(target_date))
         finished_at = datetime.now(ZoneInfo("Asia/Shanghai"))
         payload_json = json.dumps(
-            snapshot.model_dump(), ensure_ascii=False, sort_keys=True
+            snapshot.model_dump(mode="json"), ensure_ascii=False, sort_keys=True
         )
         publish_snapshot(
             selected_path,
