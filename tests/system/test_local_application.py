@@ -138,14 +138,9 @@ class LocalApplicationTest(unittest.TestCase):
         self.assertEqual(dashboard["actual_data_date"], "2026-07-20")
         self.assertEqual(dashboard["task_status"], "succeeded")
         self.assertIsNotNone(dashboard["last_updated_at"])
-        self.assertEqual(
-            dashboard["snapshot"],
-            {
-                "source": "simulation",
-                "label": "确定性模拟快照",
-                "seed": 20260720,
-            },
-        )
+        self.assertEqual(dashboard["snapshot"]["source"], "simulation")
+        self.assertEqual(dashboard["snapshot"]["label"], "确定性模拟快照")
+        self.assertEqual(dashboard["snapshot"]["seed"], 20260720)
 
     def test_dashboard_falls_back_to_the_latest_snapshot_before_target_date(self) -> None:
         request = Request(
@@ -167,6 +162,57 @@ class LocalApplicationTest(unittest.TestCase):
         self.assertEqual(dashboard["actual_data_date"], "2026-07-17")
         self.assertEqual(dashboard["task_status"], "not_run")
         self.assertEqual(dashboard["snapshot"]["seed"], 20260717)
+
+    def test_market_overview_uses_only_eligible_main_board_securities(self) -> None:
+        request = Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/daily",
+            data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2):
+            pass
+
+        with urlopen(
+            f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
+            timeout=1,
+        ) as response:
+            overview = json.load(response)["snapshot"]["market_overview"]
+
+        self.assertEqual(
+            overview["indices"],
+            [
+                {"name": "上证指数", "change_pct": 0.62},
+                {"name": "深证成指", "change_pct": -0.31},
+                {"name": "创业板指", "change_pct": 0.18},
+                {"name": "沪深 300", "change_pct": 0.44},
+            ],
+        )
+        self.assertEqual(
+            overview["breadth"],
+            {
+                "advancers": 2,
+                "decliners": 2,
+                "unchanged": 1,
+                "advancer_ratio": 40.0,
+                "decliner_ratio": 40.0,
+                "unchanged_ratio": 20.0,
+            },
+        )
+        self.assertEqual(
+            overview["limit_activity"],
+            {"limit_up": 1, "limit_down": 1, "max_limit_up_streak": 3},
+        )
+        self.assertEqual(
+            overview["turnover"],
+            {"amount_cny": 270_000_000_000, "change_vs_20d_pct": 12.5},
+        )
+        self.assertEqual(
+            overview["high_low"],
+            {"new_high_20d": 2, "new_low_20d": 2},
+        )
+        self.assertEqual(overview["eligible_security_count"], 5)
+        self.assertNotIn("sentiment_score", overview)
 
     def test_root_page_exposes_the_desktop_dashboard_shell(self) -> None:
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:

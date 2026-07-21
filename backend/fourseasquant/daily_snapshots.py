@@ -17,6 +17,8 @@ from fourseasquant.database import (
     latest_task_status,
     publish_snapshot,
 )
+from fourseasquant.market_overview import MarketOverview
+from fourseasquant.simulated_market_data import simulated_market_overview
 
 
 TaskStatus = Literal["not_run", "running", "succeeded", "failed"]
@@ -27,6 +29,7 @@ class MinimalSnapshot(BaseModel):
     source: str
     label: str
     seed: int
+    market_overview: MarketOverview
 
 
 class DashboardResponse(BaseModel):
@@ -51,6 +54,7 @@ def simulated_snapshot(target_date: date) -> Mapping[str, object]:
         "source": "simulation",
         "label": "确定性模拟快照",
         "seed": int(target_date.strftime("%Y%m%d")),
+        "market_overview": simulated_market_overview().model_dump(),
     }
 
 
