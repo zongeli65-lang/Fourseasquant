@@ -49,6 +49,11 @@ from fourseasquant.review_notes import (
     read_review,
     save_review,
 )
+from fourseasquant.real_market_dashboard import (
+    RealMarketDashboard,
+    RealMarketDataNotFound,
+    read_real_market_dashboard,
+)
 from fourseasquant.settings import (
     SettingsResponse,
     SettingsUpdate,
@@ -166,6 +171,17 @@ def collect_daily_market_data(
         benchmark_close=facts.benchmark.close,
         security_count=len(facts.securities),
     )
+
+
+@app.get(
+    "/api/market-data/dashboard",
+    response_model=RealMarketDashboard,
+)
+def real_market_dashboard(target_date: date) -> RealMarketDashboard:
+    try:
+        return read_real_market_dashboard(database_path(), target_date)
+    except RealMarketDataNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)

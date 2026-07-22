@@ -59,7 +59,7 @@ def test_version_one_task_history_is_migrated_with_meaningful_stages(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
         stage = connection.execute("SELECT stage FROM task_runs").fetchone()
-    assert version == ("5",)
+    assert version == ("7",)
     assert stage == ("completed",)
 
 
@@ -91,7 +91,7 @@ def test_version_two_automation_claims_gain_owned_claim_ids(tmp_path: Path) -> N
         claim = connection.execute(
             "SELECT target_date, claim_id FROM automation_claims"
         ).fetchone()
-    assert version == ("5",)
+    assert version == ("7",)
     assert claim is not None
     assert claim[0] == "2026-07-21"
     assert claim[1]

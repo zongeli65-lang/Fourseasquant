@@ -16,10 +16,14 @@ from fourseasquant.akshare_market_data import (
     SecurityDailyFact,
 )
 from fourseasquant.database import (
+    HistoricalBenchmarkFactRow,
+    HistoricalMarketSummaryRow,
     HistoricalSecurityFactRow,
     completed_history_symbols,
     historical_security_facts_for_date,
     save_history_symbol_batch,
+    save_historical_benchmark_fact,
+    save_historical_market_summary,
     save_market_facts,
 )
 
@@ -368,6 +372,40 @@ class AkshareOneYearHistoryImporter:
                 )
             )
         for batch in daily_batches:
+            save_historical_benchmark_fact(
+                path,
+                source=HISTORY_SOURCE,
+                fact=HistoricalBenchmarkFactRow(
+                    actual_data_date=batch.actual_data_date,
+                    name=batch.benchmark.name,
+                    open=batch.benchmark.open,
+                    high=batch.benchmark.high,
+                    low=batch.benchmark.low,
+                    close=batch.benchmark.close,
+                    volume=batch.benchmark.volume,
+                ),
+            )
+            advancers = sum(
+                security.change_pct > 0 for security in batch.securities
+            )
+            decliners = sum(
+                security.change_pct < 0 for security in batch.securities
+            )
+            save_historical_market_summary(
+                path,
+                source=HISTORY_SOURCE,
+                summary=HistoricalMarketSummaryRow(
+                    actual_data_date=batch.actual_data_date,
+                    benchmark_close=batch.benchmark.close,
+                    turnover_cny=sum(
+                        security.turnover_cny for security in batch.securities
+                    ),
+                    security_count=len(batch.securities),
+                    advancers=advancers,
+                    decliners=decliners,
+                    unchanged=len(batch.securities) - advancers - decliners,
+                ),
+            )
             save_market_facts(
                 path,
                 actual_data_date=batch.actual_data_date,

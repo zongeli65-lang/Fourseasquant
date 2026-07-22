@@ -54,6 +54,28 @@ class HistoricalSecurityFactRow:
     listing_trading_days: int
 
 
+@dataclass(frozen=True)
+class HistoricalBenchmarkFactRow:
+    actual_data_date: date
+    name: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+@dataclass(frozen=True)
+class HistoricalMarketSummaryRow:
+    actual_data_date: date
+    benchmark_close: float
+    turnover_cny: int
+    security_count: int
+    advancers: int
+    decliners: int
+    unchanged: int
+
+
 def database_path() -> Path:
     configured_path = os.environ.get("FOURSEASQUANT_DB_PATH")
     if configured_path:
@@ -178,6 +200,36 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS historical_benchmark_facts (
+                source TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                name TEXT NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume INTEGER NOT NULL,
+                PRIMARY KEY (source, actual_data_date)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS historical_market_daily_summary (
+                source TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                benchmark_close REAL NOT NULL,
+                turnover_cny INTEGER NOT NULL,
+                security_count INTEGER NOT NULL,
+                advancers INTEGER NOT NULL,
+                decliners INTEGER NOT NULL,
+                unchanged INTEGER NOT NULL,
+                PRIMARY KEY (source, actual_data_date)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS automation_claims (
                 target_date TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
@@ -229,7 +281,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '5')
+            VALUES ('schema_version', '7')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -246,7 +298,87 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("5",)
+    return row == ("7",)
+
+
+def save_historical_market_summary(
+    path: Path,
+    *,
+    source: str,
+    summary: HistoricalMarketSummaryRow,
+) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO historical_market_daily_summary (
+                source,
+                actual_data_date,
+                benchmark_close,
+                turnover_cny,
+                security_count,
+                advancers,
+                decliners,
+                unchanged
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, actual_data_date) DO UPDATE SET
+                benchmark_close = excluded.benchmark_close,
+                turnover_cny = excluded.turnover_cny,
+                security_count = excluded.security_count,
+                advancers = excluded.advancers,
+                decliners = excluded.decliners,
+                unchanged = excluded.unchanged
+            """,
+            (
+                source,
+                summary.actual_data_date.isoformat(),
+                summary.benchmark_close,
+                summary.turnover_cny,
+                summary.security_count,
+                summary.advancers,
+                summary.decliners,
+                summary.unchanged,
+            ),
+        )
+
+
+def save_historical_benchmark_fact(
+    path: Path,
+    *,
+    source: str,
+    fact: HistoricalBenchmarkFactRow,
+) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO historical_benchmark_facts (
+                source,
+                actual_data_date,
+                name,
+                open,
+                high,
+                low,
+                close,
+                volume
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, actual_data_date) DO UPDATE SET
+                name = excluded.name,
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                volume = excluded.volume
+            """,
+            (
+                source,
+                fact.actual_data_date.isoformat(),
+                fact.name,
+                fact.open,
+                fact.high,
+                fact.low,
+                fact.close,
+                fact.volume,
+            ),
+        )
 
 
 def save_history_symbol_batch(

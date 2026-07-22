@@ -11,6 +11,7 @@ import {
 import { ReviewNotes } from "./ReviewNotes";
 import { PortfolioReview, type PortfolioReviewData } from "./PortfolioReview";
 import { SettingsPanel } from "./SettingsPanel";
+import { RealMarketDashboard } from "./RealMarketDashboard";
 
 type HealthStatus = {
   application: string;
@@ -347,6 +348,8 @@ export function App() {
           </div>
         )}
       </section>
+
+      <RealMarketDashboard targetDate={targetDate} />
 
       <section className="task-history" aria-labelledby="task-history-title">
         <div className="snapshot-heading">
