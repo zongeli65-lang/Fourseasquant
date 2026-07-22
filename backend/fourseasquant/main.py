@@ -59,8 +59,11 @@ from fourseasquant.review_notes import (
     save_review,
 )
 from fourseasquant.real_market_dashboard import (
+    OverviewCategory,
+    OverviewSecurityPage,
     RealMarketDashboard,
     RealMarketDataNotFound,
+    read_overview_securities,
     read_real_market_dashboard,
 )
 from fourseasquant.settings import (
@@ -189,6 +192,30 @@ def collect_daily_market_data(
 def real_market_dashboard(target_date: date) -> RealMarketDashboard:
     try:
         return read_real_market_dashboard(database_path(), target_date)
+    except RealMarketDataNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/market-data/overview-securities",
+    response_model=OverviewSecurityPage,
+)
+def overview_securities(
+    target_date: date,
+    category: OverviewCategory = "eligible",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    query: str = Query(default="", max_length=40),
+) -> OverviewSecurityPage:
+    try:
+        return read_overview_securities(
+            database_path(),
+            requested_date=target_date,
+            category=category,
+            page=page,
+            page_size=page_size,
+            query=query,
+        )
     except RealMarketDataNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 

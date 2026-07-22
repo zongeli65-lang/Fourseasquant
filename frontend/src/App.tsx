@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { MarketOverview, type MarketOverviewData } from "./MarketOverview";
 import {
   SectorPerformance,
   type SectorPerformanceData,
@@ -32,7 +31,6 @@ type DashboardSnapshot = {
   source: string;
   label: string;
   seed: number;
-  market_overview: MarketOverviewData;
   sector_performance: SectorPerformanceData;
   strategy_performance: StrategyPerformanceData;
   portfolio_review: PortfolioReviewData;
@@ -411,10 +409,6 @@ export function App() {
           </div>
         )}
       </section>
-
-      {dashboard.kind === "ready" && dashboard.data.snapshot && (
-        <MarketOverview data={dashboard.data.snapshot.market_overview} />
-      )}
 
       <SectorPerformance
         data={

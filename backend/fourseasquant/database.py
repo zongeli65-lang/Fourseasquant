@@ -298,7 +298,7 @@ def initialize_database(path: Path) -> None:
                 benchmark,
                 data_adapter,
                 new_stock_exclusion_days
-            ) VALUES (1, '16:30', '沪深 300', 'simulation', 20)
+            ) VALUES (1, '16:30', '沪深 300', 'simulation', 60)
             """
         )
         connection.execute(
