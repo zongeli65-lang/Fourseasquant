@@ -38,6 +38,22 @@ class MarketFactsRow:
     collected_at: datetime
 
 
+@dataclass(frozen=True)
+class HistoricalSecurityFactRow:
+    actual_data_date: date
+    code: str
+    name: str
+    open: float
+    high: float
+    low: float
+    close: float
+    previous_close: float
+    change_pct: float
+    volume: int
+    turnover_cny: int
+    listing_trading_days: int
+
+
 def database_path() -> Path:
     configured_path = os.environ.get("FOURSEASQUANT_DB_PATH")
     if configured_path:
@@ -123,6 +139,45 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS historical_security_facts (
+                source TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                previous_close REAL NOT NULL,
+                change_pct REAL NOT NULL,
+                volume INTEGER NOT NULL,
+                turnover_cny INTEGER NOT NULL,
+                listing_trading_days INTEGER NOT NULL,
+                PRIMARY KEY (source, actual_data_date, code)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_historical_security_facts_date
+            ON historical_security_facts (source, actual_data_date, code)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS history_ingestion_progress (
+                source TEXT NOT NULL,
+                range_start TEXT NOT NULL,
+                range_end TEXT NOT NULL,
+                code TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                completed_at TEXT NOT NULL,
+                PRIMARY KEY (source, range_start, range_end, code)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS automation_claims (
                 target_date TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
@@ -174,7 +229,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '4')
+            VALUES ('schema_version', '5')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -191,7 +246,148 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("4",)
+    return row == ("5",)
+
+
+def save_history_symbol_batch(
+    path: Path,
+    *,
+    source: str,
+    range_start: date,
+    range_end: date,
+    code: str,
+    facts: list[HistoricalSecurityFactRow],
+    completed_at: datetime,
+) -> None:
+    with sqlite3.connect(path) as connection:
+        with connection:
+            connection.executemany(
+                """
+                INSERT INTO historical_security_facts (
+                    source,
+                    actual_data_date,
+                    code,
+                    name,
+                    open,
+                    high,
+                    low,
+                    close,
+                    previous_close,
+                    change_pct,
+                    volume,
+                    turnover_cny,
+                    listing_trading_days
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, actual_data_date, code) DO UPDATE SET
+                    name = excluded.name,
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    previous_close = excluded.previous_close,
+                    change_pct = excluded.change_pct,
+                    volume = excluded.volume,
+                    turnover_cny = excluded.turnover_cny,
+                    listing_trading_days = excluded.listing_trading_days
+                """,
+                [
+                    (
+                        source,
+                        fact.actual_data_date.isoformat(),
+                        fact.code,
+                        fact.name,
+                        fact.open,
+                        fact.high,
+                        fact.low,
+                        fact.close,
+                        fact.previous_close,
+                        fact.change_pct,
+                        fact.volume,
+                        fact.turnover_cny,
+                        fact.listing_trading_days,
+                    )
+                    for fact in facts
+                ],
+            )
+            connection.execute(
+                """
+                INSERT INTO history_ingestion_progress (
+                    source,
+                    range_start,
+                    range_end,
+                    code,
+                    row_count,
+                    completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, range_start, range_end, code) DO UPDATE SET
+                    row_count = excluded.row_count,
+                    completed_at = excluded.completed_at
+                """,
+                (
+                    source,
+                    range_start.isoformat(),
+                    range_end.isoformat(),
+                    code,
+                    len(facts),
+                    completed_at.isoformat(),
+                ),
+            )
+
+
+def completed_history_symbols(
+    path: Path,
+    *,
+    source: str,
+    range_start: date,
+    range_end: date,
+) -> set[str]:
+    with sqlite3.connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT code
+            FROM history_ingestion_progress
+            WHERE source = ? AND range_start = ? AND range_end = ?
+            """,
+            (source, range_start.isoformat(), range_end.isoformat()),
+        ).fetchall()
+    return {cast(str, row[0]) for row in rows}
+
+
+def historical_security_facts_for_date(
+    path: Path,
+    *,
+    source: str,
+    actual_data_date: date,
+) -> list[HistoricalSecurityFactRow]:
+    with sqlite3.connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT actual_data_date, code, name, open, high, low, close,
+                   previous_close, change_pct, volume, turnover_cny,
+                   listing_trading_days
+            FROM historical_security_facts
+            WHERE source = ? AND actual_data_date = ?
+            ORDER BY code
+            """,
+            (source, actual_data_date.isoformat()),
+        ).fetchall()
+    return [
+        HistoricalSecurityFactRow(
+            actual_data_date=date.fromisoformat(cast(str, row[0])),
+            code=cast(str, row[1]),
+            name=cast(str, row[2]),
+            open=cast(float, row[3]),
+            high=cast(float, row[4]),
+            low=cast(float, row[5]),
+            close=cast(float, row[6]),
+            previous_close=cast(float, row[7]),
+            change_pct=cast(float, row[8]),
+            volume=cast(int, row[9]),
+            turnover_cny=cast(int, row[10]),
+            listing_trading_days=cast(int, row[11]),
+        )
+        for row in rows
+    ]
 
 
 def save_market_facts(

@@ -6,10 +6,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fourseasquant.database import (
+    HistoricalSecurityFactRow,
     claim_automation_date,
+    completed_history_symbols,
+    historical_security_facts_for_date,
     initialize_database,
     latest_market_facts,
     release_automation_date,
+    save_history_symbol_batch,
     save_market_facts,
 )
 
@@ -55,7 +59,7 @@ def test_version_one_task_history_is_migrated_with_meaningful_stages(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
         stage = connection.execute("SELECT stage FROM task_runs").fetchone()
-    assert version == ("4",)
+    assert version == ("5",)
     assert stage == ("completed",)
 
 
@@ -87,7 +91,7 @@ def test_version_two_automation_claims_gain_owned_claim_ids(tmp_path: Path) -> N
         claim = connection.execute(
             "SELECT target_date, claim_id FROM automation_claims"
         ).fetchone()
-    assert version == ("4",)
+    assert version == ("5",)
     assert claim is not None
     assert claim[0] == "2026-07-21"
     assert claim[1]
@@ -167,3 +171,70 @@ def test_market_facts_keep_changed_revisions_without_duplicating_same_content(
     assert latest.source == "akshare"
     assert latest.payload_json.endswith('"close":12.35}]}')
     assert latest.collected_at == revised_collected_at
+
+
+def test_history_symbol_batch_is_atomic_idempotent_and_resumable(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "history.db"
+    initialize_database(database)
+    range_start = date(2025, 7, 22)
+    range_end = date(2026, 7, 21)
+    collected_at = datetime(
+        2026, 7, 22, 16, 30, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
+    row = HistoricalSecurityFactRow(
+        actual_data_date=date(2026, 7, 21),
+        code="000001",
+        name="平安银行",
+        open=10.99,
+        high=11.13,
+        low=10.83,
+        close=10.84,
+        previous_close=10.98,
+        change_pct=-1.275,
+        volume=175_511_288,
+        turnover_cny=1_925_298_925,
+        listing_trading_days=8_000,
+    )
+
+    save_history_symbol_batch(
+        database,
+        source="akshare_sina_daily",
+        range_start=range_start,
+        range_end=range_end,
+        code="000001",
+        facts=[row],
+        completed_at=collected_at,
+    )
+    save_history_symbol_batch(
+        database,
+        source="akshare_sina_daily",
+        range_start=range_start,
+        range_end=range_end,
+        code="000001",
+        facts=[row],
+        completed_at=collected_at,
+    )
+
+    assert completed_history_symbols(
+        database,
+        source="akshare_sina_daily",
+        range_start=range_start,
+        range_end=range_end,
+    ) == {"000001"}
+    facts = historical_security_facts_for_date(
+        database,
+        source="akshare_sina_daily",
+        actual_data_date=date(2026, 7, 21),
+    )
+    assert facts == [row]
+    with sqlite3.connect(database) as connection:
+        fact_count = connection.execute(
+            "SELECT COUNT(*) FROM historical_security_facts"
+        ).fetchone()
+        progress_count = connection.execute(
+            "SELECT COUNT(*) FROM history_ingestion_progress"
+        ).fetchone()
+    assert fact_count == (1,)
+    assert progress_count == (1,)
