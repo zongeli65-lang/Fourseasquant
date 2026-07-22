@@ -13,6 +13,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from fourseasquant.akshare_market_data import (
+    MarketDataQualityError,
+    MarketDataSourceError,
+    collect_and_store_daily_facts,
+)
 from fourseasquant.backfill import (
     BackfillAlreadyRunning,
     BackfillPreview,
@@ -99,6 +104,15 @@ class DailyTaskRequest(BaseModel):
     target_date: date
 
 
+class MarketDataCollectionResponse(BaseModel):
+    source: str
+    requested_date: date
+    actual_data_date: date
+    benchmark: str
+    benchmark_close: float
+    security_count: int
+
+
 class FailureSimulationRequest(BaseModel):
     target_date: date
     stage: FailureStage
@@ -122,6 +136,36 @@ def health() -> HealthResponse:
 @app.get("/api/dashboard", response_model=DashboardResponse)
 def dashboard(target_date: date) -> DashboardResponse:
     return read_dashboard(target_date)
+
+
+@app.post(
+    "/api/market-data/daily",
+    response_model=MarketDataCollectionResponse,
+    status_code=201,
+)
+def collect_daily_market_data(
+    request: DailyTaskRequest,
+) -> MarketDataCollectionResponse:
+    path = database_path()
+    settings = read_settings(path)
+    try:
+        facts = collect_and_store_daily_facts(
+            request.target_date,
+            path=path,
+            new_stock_exclusion_days=settings.new_stock_exclusion_days,
+        )
+    except MarketDataQualityError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except MarketDataSourceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return MarketDataCollectionResponse(
+        source=facts.source,
+        requested_date=facts.requested_date,
+        actual_data_date=facts.actual_data_date,
+        benchmark=facts.benchmark.name,
+        benchmark_close=facts.benchmark.close,
+        security_count=len(facts.securities),
+    )
 
 
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)

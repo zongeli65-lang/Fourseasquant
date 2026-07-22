@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import uuid
@@ -26,6 +27,15 @@ class TaskRunRow:
     stage: str
     status: str
     error_summary: str | None
+
+
+@dataclass(frozen=True)
+class MarketFactsRow:
+    id: int
+    actual_data_date: date
+    source: str
+    payload_json: str
+    collected_at: datetime
 
 
 def database_path() -> Path:
@@ -94,6 +104,25 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS market_fact_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actual_data_date TEXT NOT NULL,
+                source TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                collected_at TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                UNIQUE(actual_data_date, content_sha256)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_market_fact_snapshots_date_id
+            ON market_fact_snapshots (actual_data_date, id DESC)
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS automation_claims (
                 target_date TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
@@ -145,7 +174,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '3')
+            VALUES ('schema_version', '4')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -162,7 +191,79 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("3",)
+    return row == ("4",)
+
+
+def save_market_facts(
+    path: Path,
+    *,
+    actual_data_date: date,
+    source: str,
+    payload_json: str,
+    collected_at: datetime,
+) -> int:
+    content_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    with sqlite3.connect(path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO market_fact_snapshots (
+                actual_data_date,
+                source,
+                payload_json,
+                collected_at,
+                content_sha256
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                actual_data_date.isoformat(),
+                source,
+                payload_json,
+                collected_at.isoformat(),
+                content_sha256,
+            ),
+        )
+        if cursor.rowcount == 1:
+            return cast(int, cursor.lastrowid)
+        row = cast(
+            tuple[int],
+            connection.execute(
+                """
+                SELECT id
+                FROM market_fact_snapshots
+                WHERE actual_data_date = ? AND content_sha256 = ?
+                """,
+                (actual_data_date.isoformat(), content_sha256),
+            ).fetchone(),
+        )
+    return row[0]
+
+
+def latest_market_facts(
+    path: Path, actual_data_date: date
+) -> MarketFactsRow | None:
+    with sqlite3.connect(path) as connection:
+        row = cast(
+            tuple[int, str, str, str, str] | None,
+            connection.execute(
+                """
+                SELECT id, actual_data_date, source, payload_json, collected_at
+                FROM market_fact_snapshots
+                WHERE actual_data_date = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (actual_data_date.isoformat(),),
+            ).fetchone(),
+        )
+    if row is None:
+        return None
+    return MarketFactsRow(
+        id=row[0],
+        actual_data_date=date.fromisoformat(row[1]),
+        source=row[2],
+        payload_json=row[3],
+        collected_at=datetime.fromisoformat(row[4]),
+    )
 
 
 def latest_snapshot(path: Path, target_date: date) -> SnapshotRow | None:
