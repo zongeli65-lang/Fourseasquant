@@ -150,9 +150,39 @@ def test_failure_notification_includes_stage(tmp_path: Path) -> None:
         simulate_failure_stage="strategy_run",
     )
     assert repeated.status == "skipped"
-    assert "手动重试" in repeated.reason
+    assert "下一次自动重试" in repeated.reason
     assert len(task_runs(database)) == 1
     assert len(notifier.events) == 1
+
+
+def test_failed_schedule_retries_at_configured_offsets(tmp_path: Path) -> None:
+    database = tmp_path / "retry.db"
+    initialize_database(database)
+    notifier = RecordingNotifier()
+
+    first = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=notifier,
+        simulate_failure_stage="market_prepare",
+    )
+    waiting = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 39, tzinfo=BEIJING),
+        path=database,
+        notifier=notifier,
+        simulate_failure_stage="market_prepare",
+    )
+    second = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 40, tzinfo=BEIJING),
+        path=database,
+        notifier=notifier,
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert first.status == "failed"
+    assert waiting.status == "skipped"
+    assert second.status == "failed"
+    assert len(task_runs(database)) == 2
 
 
 def test_notification_failure_does_not_rollback_snapshot(

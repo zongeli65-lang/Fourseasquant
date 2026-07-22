@@ -32,6 +32,7 @@ FrameFactory = Callable[[], pd.DataFrame]
 StockHistoryFactory = Callable[[str, date, date], pd.DataFrame]
 ProgressCallback = Callable[[int, int, str, bool], None]
 HISTORY_SOURCE = "akshare_sina_daily"
+HISTORY_QFQ_SOURCE = "akshare_sina_daily_qfq"
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,8 @@ class AkshareOneYearHistoryImporter:
         sz_listing: FrameFactory,
         index_history: FrameFactory,
         stock_history: StockHistoryFactory,
+        history_source: str = HISTORY_SOURCE,
+        publish_market_days: bool = True,
         max_workers: int = 2,
         max_attempts: int = 3,
         progress_callback: ProgressCallback | None = None,
@@ -72,6 +75,8 @@ class AkshareOneYearHistoryImporter:
         self._sz_listing = sz_listing
         self._index_history = index_history
         self._stock_history = stock_history
+        self._history_source = history_source
+        self._publish_market_days = publish_market_days
         self._max_workers = max(1, max_workers)
         self._max_attempts = max(1, max_attempts)
         self._progress_callback = progress_callback
@@ -97,7 +102,7 @@ class AkshareOneYearHistoryImporter:
         listings = self._main_board_listings(range_end)
         completed = completed_history_symbols(
             path,
-            source=HISTORY_SOURCE,
+            source=self._history_source,
             range_start=range_start,
             range_end=range_end,
         )
@@ -133,7 +138,7 @@ class AkshareOneYearHistoryImporter:
                     continue
                 save_history_symbol_batch(
                     path,
-                    source=HISTORY_SOURCE,
+                    source=self._history_source,
                     range_start=range_start,
                     range_end=range_end,
                     code=listing.code,
@@ -150,12 +155,12 @@ class AkshareOneYearHistoryImporter:
 
         completed_after = completed_history_symbols(
             path,
-            source=HISTORY_SOURCE,
+            source=self._history_source,
             range_start=range_start,
             range_end=range_end,
         )
         published_days = 0
-        if len(completed_after) == len(listings):
+        if len(completed_after) == len(listings) and self._publish_market_days:
             published_days = self._publish_complete_days(
                 path=path,
                 trading_dates=trading_dates,
@@ -432,6 +437,35 @@ def build_akshare_one_year_history_importer(
             start_date=start.strftime("%Y%m%d"),
             end_date=end.strftime("%Y%m%d"),
         ),
+        max_workers=max_workers,
+        progress_callback=progress_callback,
+    )
+
+
+def build_akshare_qfq_history_importer(
+    *,
+    max_workers: int = 2,
+    progress_callback: ProgressCallback | None = None,
+    version_tag: str | None = None,
+) -> AkshareOneYearHistoryImporter:
+    import akshare as ak
+
+    return AkshareOneYearHistoryImporter(
+        sh_listing=lambda: ak.stock_info_sh_name_code(symbol="主板A股"),
+        sz_listing=lambda: ak.stock_info_sz_name_code(symbol="A股列表"),
+        index_history=lambda: ak.stock_zh_index_daily(symbol="sh000300"),
+        stock_history=lambda symbol, start, end: ak.stock_zh_a_daily(
+            symbol=symbol,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            adjust="qfq",
+        ),
+        history_source=(
+            f"{HISTORY_QFQ_SOURCE}:{version_tag}"
+            if version_tag
+            else HISTORY_QFQ_SOURCE
+        ),
+        publish_market_days=False,
         max_workers=max_workers,
         progress_callback=progress_callback,
     )

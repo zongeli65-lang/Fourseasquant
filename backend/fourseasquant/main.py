@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +26,14 @@ from fourseasquant.backfill import (
     BackfillResponse,
     execute_backfill,
     preview_backfill,
+)
+from fourseasquant.candle_daily_task import execute_daily_task_with_candles
+from fourseasquant.candlesticks import (
+    CandleDataNotFound,
+    CandleSeries,
+    SecuritySearchResult,
+    read_candle_series,
+    search_eligible_securities,
 )
 from fourseasquant.automation import run_startup_catchup
 
@@ -184,9 +193,44 @@ def real_market_dashboard(target_date: date) -> RealMarketDashboard:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@app.get("/api/market-data/securities", response_model=list[SecuritySearchResult])
+def security_search(
+    target_date: date,
+    query: str = "",
+    limit: int = 20,
+) -> list[SecuritySearchResult]:
+    return search_eligible_securities(
+        database_path(),
+        query=query,
+        requested_date=target_date,
+        limit=limit,
+    )
+
+
+@app.get("/api/market-data/candles", response_model=CandleSeries)
+def candle_series(
+    instrument_type: Literal["stock", "index"],
+    code: str,
+    target_date: date,
+    adjustment: Literal["raw", "qfq"] = "qfq",
+) -> CandleSeries:
+    try:
+        return read_candle_series(
+            database_path(),
+            instrument_type=instrument_type,
+            code=code,
+            requested_date=target_date,
+            adjustment=adjustment,
+        )
+    except CandleDataNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)
 def run_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
-    return execute_daily_task(request.target_date)
+    if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
+        return execute_daily_task(request.target_date)
+    return execute_daily_task_with_candles(request.target_date)
 
 
 if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
@@ -226,7 +270,12 @@ if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
 
 @app.post("/api/tasks/daily/retry", response_model=TaskRunResponse, status_code=201)
 def retry_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
-    return execute_daily_task(request.target_date, trigger_method="retry")
+    if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
+        return execute_daily_task(request.target_date, trigger_method="retry")
+    return execute_daily_task_with_candles(
+        request.target_date,
+        trigger_method="retry",
+    )
 
 
 @app.get("/api/tasks/history", response_model=list[TaskHistoryItem])

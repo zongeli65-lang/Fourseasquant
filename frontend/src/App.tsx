@@ -12,6 +12,7 @@ import { ReviewNotes } from "./ReviewNotes";
 import { PortfolioReview, type PortfolioReviewData } from "./PortfolioReview";
 import { SettingsPanel } from "./SettingsPanel";
 import { RealMarketDashboard } from "./RealMarketDashboard";
+import { KlineExplorer, type InstrumentSelection } from "./KlineExplorer";
 
 type HealthStatus = {
   application: string;
@@ -142,6 +143,29 @@ export function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskHistory, setTaskHistory] = useState<TaskHistoryItem[]>([]);
+  const [selectedInstrument, setSelectedInstrument] = useState<InstrumentSelection>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const instrument = params.get("instrument");
+    const name = params.get("instrument_name");
+    if (instrument) {
+      const [instrumentType, code] = instrument.split(":");
+      if ((instrumentType === "stock" || instrumentType === "index") && code) {
+        return { instrumentType, code, name: name || code };
+      }
+    }
+    return { instrumentType: "index", code: "sh000001", name: "上证指数" };
+  });
+
+  function selectInstrument(selection: InstrumentSelection) {
+    setSelectedInstrument(selection);
+    const url = new URL(window.location.href);
+    url.searchParams.set("instrument", `${selection.instrumentType}:${selection.code}`);
+    url.searchParams.set("instrument_name", selection.name);
+    window.history.replaceState(null, "", url);
+    window.setTimeout(() => {
+      document.querySelector("[data-testid='kline-explorer']")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -349,7 +373,13 @@ export function App() {
         )}
       </section>
 
-      <RealMarketDashboard targetDate={targetDate} />
+      <RealMarketDashboard targetDate={targetDate} onSelectSecurity={selectInstrument} />
+
+      <KlineExplorer
+        targetDate={targetDate}
+        selection={selectedInstrument}
+        onSelectionChange={selectInstrument}
+      />
 
       <section className="task-history" aria-labelledby="task-history-title">
         <div className="snapshot-heading">
@@ -399,7 +429,7 @@ export function App() {
       )}
 
       {dashboard.kind === "ready" && dashboard.data.snapshot && (
-        <PortfolioReview data={dashboard.data.snapshot.portfolio_review} />
+        <PortfolioReview data={dashboard.data.snapshot.portfolio_review} onSelectSecurity={selectInstrument} />
       )}
 
       <ReviewNotes

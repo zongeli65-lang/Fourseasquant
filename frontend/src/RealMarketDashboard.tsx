@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { movementTone, signedPercentage } from "./marketFormatting";
+import type { InstrumentSelection } from "./KlineExplorer";
 
 type SecurityMarketView = {
   code: string;
@@ -81,9 +82,11 @@ function heatColor(change: number): string {
 function Ranking({
   title,
   rows,
+  onSelect,
 }: {
   title: string;
   rows: SecurityMarketView[];
+  onSelect: (selection: InstrumentSelection) => void;
 }) {
   return (
     <article className="real-ranking-card">
@@ -91,6 +94,7 @@ function Ranking({
       <ol>
         {rows.map((row) => (
           <li key={row.code}>
+            <button type="button" className="real-stock-link" onClick={() => onSelect({ instrumentType: "stock", code: row.code, name: row.name })}>
             <span className="real-ranking-name">
               <strong>{row.name}</strong>
               <small>{row.code}</small>
@@ -99,6 +103,7 @@ function Ranking({
             <strong className={`metric-value--${movementTone(row.change_pct)}`}>
               {signedPercentage(row.change_pct)}
             </strong>
+            </button>
           </li>
         ))}
       </ol>
@@ -106,7 +111,13 @@ function Ranking({
   );
 }
 
-export function RealMarketDashboard({ targetDate }: { targetDate: string }) {
+export function RealMarketDashboard({
+  targetDate,
+  onSelectSecurity,
+}: {
+  targetDate: string;
+  onSelectSecurity: (selection: InstrumentSelection) => void;
+}) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
   useEffect(() => {
@@ -219,8 +230,8 @@ export function RealMarketDashboard({ targetDate }: { targetDate: string }) {
             ))}
           </div>
         </article>
-        <Ranking title="涨幅前十" rows={data.gainers} />
-        <Ranking title="跌幅前十" rows={data.losers} />
+        <Ranking title="涨幅前十" rows={data.gainers} onSelect={onSelectSecurity} />
+        <Ranking title="跌幅前十" rows={data.losers} onSelect={onSelectSecurity} />
       </div>
 
       <article className="real-heatmap-card">
@@ -230,10 +241,10 @@ export function RealMarketDashboard({ targetDate }: { targetDate: string }) {
         </div>
         <div className="real-heatmap" aria-label="成交额前一百个股涨跌热力图">
           {data.heatmap.map((stock) => (
-            <div key={stock.code} style={{ backgroundColor: heatColor(stock.change_pct) }} title={`${stock.name} ${stock.code} ${signedPercentage(stock.change_pct)} · ${hundredMillion(stock.turnover_cny)}`}>
+            <button type="button" key={stock.code} onClick={() => onSelectSecurity({ instrumentType: "stock", code: stock.code, name: stock.name })} style={{ backgroundColor: heatColor(stock.change_pct) }} title={`${stock.name} ${stock.code} ${signedPercentage(stock.change_pct)} · ${hundredMillion(stock.turnover_cny)}`}>
               <strong>{stock.name}</strong>
               <span>{signedPercentage(stock.change_pct)}</span>
-            </div>
+            </button>
           ))}
         </div>
       </article>

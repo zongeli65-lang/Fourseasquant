@@ -14,12 +14,14 @@ from fourseasquant.daily_snapshots import (
     TaskRunResponse,
     execute_daily_task,
 )
+from fourseasquant.candle_daily_task import execute_daily_task_with_candles
 from fourseasquant.database import (
     claim_automation_date,
     database_is_ready,
     database_path,
     initialize_database,
     release_automation_date,
+    scheduled_attempt_count,
     scheduled_attempt_exists,
     snapshot_exists,
 )
@@ -34,6 +36,7 @@ from fourseasquant.trading_calendar import (
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 CATCHUP_LOOKBACK_DAYS = 45
+RETRY_MINUTES = (0, 10, 30, 60)
 
 
 class NotificationEvent(BaseModel):
@@ -87,6 +90,7 @@ def run_scheduled_task(
 ) -> AutomationOutcome:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
     selected_path = path or database_path()
+    use_real_candles = path is None
     if not database_is_ready(selected_path):
         initialize_database(selected_path)
     target_date = current.date()
@@ -104,7 +108,11 @@ def run_scheduled_task(
             target_date=target_date,
             reason="非交易日",
         )
-    if not force and current.time().replace(tzinfo=None) < scheduled_time:
+    allowed_attempts = _allowed_scheduled_attempts(
+        current=current,
+        scheduled_time=scheduled_time,
+    )
+    if not force and allowed_attempts == 0:
         return AutomationOutcome(
             status="skipped",
             target_date=target_date,
@@ -116,11 +124,17 @@ def run_scheduled_task(
             target_date=target_date,
             reason="该交易日已发布",
         )
-    if not force and scheduled_attempt_exists(selected_path, target_date):
+    attempts = scheduled_attempt_count(selected_path, target_date)
+    if not force and attempts >= allowed_attempts:
+        final_retry_due = _final_retry_time(target_date, scheduled_time)
         return AutomationOutcome(
             status="skipped",
             target_date=target_date,
-            reason="该交易日已自动尝试，请在网站内手动重试",
+            reason=(
+                "自动重试已用尽，请在网站内手动重试"
+                if current >= final_retry_due
+                else "等待下一次自动重试"
+            ),
         )
     task = _execute_claimed_task(
         target_date=target_date,
@@ -128,6 +142,7 @@ def run_scheduled_task(
         path=selected_path,
         simulate_failure_stage=simulate_failure_stage,
         allow_existing=force,
+        use_real_candles=use_real_candles,
     )
     if task is None:
         return AutomationOutcome(
@@ -141,7 +156,24 @@ def run_scheduled_task(
         reason="自动任务完成" if task.status == "succeeded" else "自动任务失败",
         task=task,
     )
+    if (
+        outcome.status == "failed"
+        and not force
+        and simulate_failure_stage is None
+        and current < _final_retry_time(target_date, scheduled_time)
+    ):
+        return outcome
     return _notify(outcome, notifier or MacOSNotifier(), current)
+
+
+def _allowed_scheduled_attempts(*, current: datetime, scheduled_time: time) -> int:
+    base = datetime.combine(current.date(), scheduled_time, tzinfo=BEIJING)
+    return sum(current >= base + timedelta(minutes=minutes) for minutes in RETRY_MINUTES)
+
+
+def _final_retry_time(target_date: date, scheduled_time: time) -> datetime:
+    base = datetime.combine(target_date, scheduled_time, tzinfo=BEIJING)
+    return base + timedelta(minutes=RETRY_MINUTES[-1])
 
 
 def run_startup_catchup(
@@ -152,6 +184,9 @@ def run_startup_catchup(
 ) -> AutomationOutcome:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
     selected_path = path or database_path()
+    # 启动补跑可能针对较早的策略快照；K 线数据集已按最新完整交易日
+    # 独立发布，不能为每个历史缺口重复抓取全市场一年数据。
+    use_real_candles = False
     if not database_is_ready(selected_path):
         initialize_database(selected_path)
     settings = read_settings(selected_path)
@@ -173,6 +208,7 @@ def run_startup_catchup(
         target_date=target_date,
         current=current,
         path=selected_path,
+        use_real_candles=use_real_candles,
     )
     if task is None:
         return AutomationOutcome(
@@ -228,6 +264,7 @@ def _execute_claimed_task(
     path: Path,
     simulate_failure_stage: FailureStage | None = None,
     allow_existing: bool = False,
+    use_real_candles: bool = False,
 ) -> TaskRunResponse | None:
     claim_id = claim_automation_date(path, target_date, current)
     if claim_id is None:
@@ -235,6 +272,12 @@ def _execute_claimed_task(
     try:
         if not allow_existing and snapshot_exists(path, target_date):
             return None
+        if use_real_candles and simulate_failure_stage is None:
+            return execute_daily_task_with_candles(
+                target_date,
+                path=path,
+                trigger_method="scheduled",
+            )
         return execute_daily_task(
             target_date,
             path=path,

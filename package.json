@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "uv run python scripts/dev.py",
     "data:history-year": "uv run python scripts/import_one_year_history.py",
+    "data:candles-year": "uv run python scripts/import_candlestick_history.py",
     "start": "npm run build --workspace frontend && uv run python scripts/start.py",
     "build": "npm run build --workspace frontend",
     "typecheck": "npm run typecheck --workspace frontend && tsc --project tsconfig.tests.json --noEmit --pretty false && uv run mypy",

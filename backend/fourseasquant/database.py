@@ -230,6 +230,29 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS candle_dataset_publications (
+                actual_data_date TEXT PRIMARY KEY,
+                qfq_source TEXT NOT NULL DEFAULT 'akshare_sina_daily_qfq',
+                published_at TEXT NOT NULL
+            )
+            """
+        )
+        candle_publication_columns = {
+            cast(str, row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(candle_dataset_publications)"
+            )
+        }
+        if "qfq_source" not in candle_publication_columns:
+            connection.execute(
+                """
+                ALTER TABLE candle_dataset_publications
+                ADD COLUMN qfq_source TEXT NOT NULL
+                DEFAULT 'akshare_sina_daily_qfq'
+                """
+            )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS automation_claims (
                 target_date TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
@@ -281,7 +304,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '7')
+            VALUES ('schema_version', '9')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -298,7 +321,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("7",)
+    return row == ("9",)
 
 
 def save_historical_market_summary(
@@ -840,3 +863,18 @@ def scheduled_attempt_exists(path: Path, target_date: date) -> bool:
             (target_date.isoformat(),),
         ).fetchone()
     return row is not None
+
+
+def scheduled_attempt_count(path: Path, target_date: date) -> int:
+    with sqlite3.connect(path) as connection:
+        row = cast(
+            tuple[int],
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM task_runs
+                WHERE target_date = ? AND trigger_method = 'scheduled'
+                """,
+                (target_date.isoformat(),),
+            ).fetchone(),
+        )
+    return row[0]
