@@ -70,9 +70,11 @@ const DERIVATIVE_LABELS: Record<TechnicalScore["derivative_state"], string> = {
 export function TechnicalLeadershipPanel({
   targetDate,
   onSelectSecurity,
+  compact = false,
 }: {
   targetDate: string;
   onSelectSecurity: (selection: InstrumentSelection) => void;
+  compact?: boolean;
 }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
@@ -117,15 +119,15 @@ export function TechnicalLeadershipPanel({
   }, [targetDate]);
 
   if (state.kind === "loading") {
-    return <section className="technical-panel technical-panel--message">正在读取个股技术评分…</section>;
+    return <section className={`technical-panel technical-panel--message${compact ? " technical-panel--compact" : ""}`}>正在读取个股技术评分…</section>;
   }
   if (state.kind === "error") {
-    return <section className="technical-panel technical-panel--message technical-panel--error">技术评分读取失败，请检查本机服务。</section>;
+    return <section className={`technical-panel technical-panel--message technical-panel--error${compact ? " technical-panel--compact" : ""}`}>技术评分读取失败，请检查本机服务。</section>;
   }
   const publication = state.status.publication;
   if (publication === null) {
     return (
-      <section className="technical-panel" data-testid="technical-score-panel">
+      <section className={`technical-panel${compact ? " technical-panel--compact" : ""}`} data-testid="technical-score-panel">
         <header className="technical-panel__header">
           <div>
             <p className="section-kicker">技术龙头 · 第一阶段</p>
@@ -143,11 +145,11 @@ export function TechnicalLeadershipPanel({
   }
 
   return (
-    <section className="technical-panel" data-testid="technical-score-panel">
+    <section className={`technical-panel${compact ? " technical-panel--compact" : ""}`} data-testid="technical-score-panel">
       <header className="technical-panel__header">
         <div>
           <p className="section-kicker">技术龙头 · 独立量价体系</p>
-          <h2>全市场个股技术评分</h2>
+          <h2>{compact ? "技术评分概览" : "全市场个股技术评分"}</h2>
           <p>
             正式覆盖 {publication.official_start} 至 {publication.official_end}
             {" · "}算法 {publication.version}
@@ -156,12 +158,14 @@ export function TechnicalLeadershipPanel({
         <span className="technical-state-badge">完整批次</span>
       </header>
 
-      <div className="technical-summary-grid">
-        <article><span>评分股票</span><strong>{publication.symbol_count.toLocaleString("zh-CN")}</strong><small>主板 · 创业板 · 科创板</small></article>
-        <article><span>永久结果</span><strong>{publication.score_count.toLocaleString("zh-CN")}</strong><small>股票 × 交易日</small></article>
-        <article><span>结构权重</span><strong>{state.status.parameters.structure_weight}</strong><small>极值结构主导</small></article>
-        <article><span>正式门槛</span><strong>{state.status.parameters.minimum_leader_score}</strong><small>结构完整仍须达标</small></article>
-      </div>
+      {!compact && (
+        <div className="technical-summary-grid">
+          <article><span>评分股票</span><strong>{publication.symbol_count.toLocaleString("zh-CN")}</strong><small>主板 · 创业板 · 科创板</small></article>
+          <article><span>永久结果</span><strong>{publication.score_count.toLocaleString("zh-CN")}</strong><small>股票 × 交易日</small></article>
+          <article><span>结构权重</span><strong>{state.status.parameters.structure_weight}</strong><small>极值结构主导</small></article>
+          <article><span>正式门槛</span><strong>{state.status.parameters.minimum_leader_score}</strong><small>结构完整仍须达标</small></article>
+        </div>
+      )}
 
       <div className="technical-contract-note">
         <div>
@@ -180,7 +184,7 @@ export function TechnicalLeadershipPanel({
             </tr>
           </thead>
           <tbody>
-            {state.scores.map((score) => (
+            {(compact ? state.scores.slice(0, 5) : state.scores).map((score) => (
               <tr key={score.code}>
                 <td>
                   <button type="button" onClick={() => onSelectSecurity({ instrumentType: "stock", code: score.code, name: score.name })}>
@@ -208,7 +212,11 @@ export function TechnicalLeadershipPanel({
           </tbody>
         </table>
       </div>
-      <p className="technical-footnote">排名使用未四舍五入分数；参数只能从后端按版本修改。点击股票可查看日 K 线、成交量和 RSI（相对强弱指标）。</p>
+      <p className="technical-footnote">
+        {compact
+          ? "展示目标日期前五名。点击股票直接进入行情浏览。"
+          : "排名使用未四舍五入分数；参数只能从后端按版本修改。点击股票可查看日 K 线、成交量和 RSI（相对强弱指标）。"}
+      </p>
     </section>
   );
 }

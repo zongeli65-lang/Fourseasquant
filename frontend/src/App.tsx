@@ -1,4 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+
+import { BrandMark } from "./BrandMark";
 import {
   StrategyPerformance,
   type StrategyPerformanceData,
@@ -9,6 +19,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { RealMarketDashboard } from "./RealMarketDashboard";
 import { KlineExplorer, type InstrumentSelection } from "./KlineExplorer";
 import { TechnicalLeadershipPanel } from "./TechnicalLeadershipPanel";
+import { movementTone, signedPercentage } from "./marketFormatting";
 
 type HealthStatus = {
   application: string;
@@ -62,6 +73,61 @@ type DashboardState =
   | { kind: "ready"; data: DashboardData }
   | { kind: "error" };
 
+type PageDefinition = {
+  path: string;
+  label: string;
+  shortLabel: string;
+  title: string;
+  description: string;
+};
+
+const pages: PageDefinition[] = [
+  {
+    path: "/overview",
+    label: "总览",
+    shortLabel: "总",
+    title: "收盘后的全局视图",
+    description: "把市场、策略、技术评分与任务状态放在同一条时间线上。",
+  },
+  {
+    path: "/market",
+    label: "市场",
+    shortLabel: "市",
+    title: "市场概览",
+    description: "指数、广度、排行榜与成交额热力图。",
+  },
+  {
+    path: "/quotes",
+    label: "行情",
+    shortLabel: "行",
+    title: "行情浏览",
+    description: "查看规则范围内股票与指数的日 K、成交量和 RSI。",
+  },
+  {
+    path: "/strategy",
+    label: "策略",
+    shortLabel: "策",
+    title: "策略与技术评分",
+    description: "策略净值、组合明细与独立量价技术证据。",
+  },
+  {
+    path: "/tasks",
+    label: "任务",
+    shortLabel: "任",
+    title: "任务中心",
+    description: "运行目标日期任务、查看失败状态与历史记录。",
+  },
+];
+
+const pageByPath = new Map(pages.map((page) => [page.path, page]));
+
+const taskStatusLabels: Record<TaskStatus, string> = {
+  not_run: "尚未运行",
+  running: "正在运行",
+  succeeded: "运行成功",
+  failed: "运行失败",
+};
+
 async function fetchDashboard(
   targetDate: string,
   signal?: AbortSignal,
@@ -76,13 +142,6 @@ async function fetchDashboard(
   return (await response.json()) as DashboardData;
 }
 
-const taskStatusLabels: Record<TaskStatus, string> = {
-  not_run: "尚未运行",
-  running: "正在运行",
-  succeeded: "运行成功",
-  failed: "运行失败",
-};
-
 function beijingDate(): string {
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -92,6 +151,31 @@ function beijingDate(): string {
   }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
+}
+
+function initialTargetDate(): string {
+  return new URLSearchParams(window.location.search).get("target_date") ?? beijingDate();
+}
+
+function initialInstrument(): InstrumentSelection {
+  const params = new URLSearchParams(window.location.search);
+  const instrument = params.get("instrument");
+  const name = params.get("instrument_name");
+  if (instrument) {
+    const [instrumentType, code] = instrument.split(":");
+    if ((instrumentType === "stock" || instrumentType === "index") && code) {
+      return { instrumentType, code, name: name || code };
+    }
+  }
+  return { instrumentType: "index", code: "sh000001", name: "上证指数" };
+}
+
+function formatBeijingDateTime(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour12: false,
+  });
 }
 
 function connectionCopy(connection: ConnectionState): {
@@ -130,80 +214,126 @@ function connectionCopy(connection: ConnectionState): {
   };
 }
 
+function PageEmptyState({
+  title,
+  detail,
+}: {
+  title: string;
+  detail: string;
+}) {
+  return (
+    <section className="page-empty-state">
+      <BrandMark compact />
+      <div>
+        <h2>{title}</h2>
+        <p>{detail}</p>
+      </div>
+    </section>
+  );
+}
+
 export function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [connection, setConnection] = useState<ConnectionState>({ kind: "loading" });
-  const [targetDate, setTargetDate] = useState(beijingDate);
+  const [targetDate, setTargetDate] = useState(initialTargetDate);
   const [dashboard, setDashboard] = useState<DashboardState>({ kind: "loading" });
   const [isRunning, setIsRunning] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskHistory, setTaskHistory] = useState<TaskHistoryItem[]>([]);
-  const [selectedInstrument, setSelectedInstrument] = useState<InstrumentSelection>(() => {
-    const params = new URLSearchParams(window.location.search);
-    const instrument = params.get("instrument");
-    const name = params.get("instrument_name");
-    if (instrument) {
-      const [instrumentType, code] = instrument.split(":");
-      if ((instrumentType === "stock" || instrumentType === "index") && code) {
-        return { instrumentType, code, name: name || code };
-      }
-    }
-    return { instrumentType: "index", code: "sh000001", name: "上证指数" };
-  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => window.localStorage.getItem("fourseasquant-sidebar") === "collapsed",
+  );
+  const [selectedInstrument, setSelectedInstrument] =
+    useState<InstrumentSelection>(initialInstrument);
+
+  const currentPage = pageByPath.get(location.pathname) ?? pages[0]!;
+  const status = connectionCopy(connection);
+  const dashboardData = dashboard.kind === "ready" ? dashboard.data : null;
+  const snapshot = dashboardData?.snapshot ?? null;
+
+  const linkSearch = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    params.set("target_date", targetDate);
+    return `?${params.toString()}`;
+  }, [location.search, targetDate]);
+
+  function updateTargetDate(value: string) {
+    setTargetDate(value);
+    const params = new URLSearchParams(location.search);
+    params.set("target_date", value);
+    navigate(
+      { pathname: location.pathname, search: `?${params.toString()}` },
+      { replace: true },
+    );
+  }
 
   function selectInstrument(selection: InstrumentSelection) {
     setSelectedInstrument(selection);
-    const url = new URL(window.location.href);
-    url.searchParams.set("instrument", `${selection.instrumentType}:${selection.code}`);
-    url.searchParams.set("instrument_name", selection.name);
-    window.history.replaceState(null, "", url);
-    window.setTimeout(() => {
-      document.querySelector("[data-testid='kline-explorer']")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
+    const params = new URLSearchParams(location.search);
+    params.set("target_date", targetDate);
+    params.set("instrument", `${selection.instrumentType}:${selection.code}`);
+    params.set("instrument_name", selection.name);
+    navigate({ pathname: "/quotes", search: `?${params.toString()}` });
+  }
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem(
+        "fourseasquant-sidebar",
+        next ? "collapsed" : "expanded",
+      );
+      return next;
+    });
   }
 
   useEffect(() => {
-    const controller = new AbortController();
+    if (location.pathname === "/") return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("target_date") === targetDate) return;
+    params.set("target_date", targetDate);
+    navigate(
+      { pathname: location.pathname, search: `?${params.toString()}` },
+      { replace: true },
+    );
+  }, [location.pathname, location.search, navigate, targetDate]);
 
+  useEffect(() => {
+    const controller = new AbortController();
     async function loadHealth() {
       try {
         const response = await fetch("/api/health", { signal: controller.signal });
-        if (!response.ok) {
-          throw new Error(`健康检查返回 ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`健康检查返回 ${response.status}`);
         const health = (await response.json()) as HealthStatus;
-        if (health.status !== "ok" || health.database !== "ready") {
-          setConnection({ kind: "degraded", health });
-          return;
-        }
-        setConnection({ kind: "online", health });
+        setConnection(
+          health.status === "ok" && health.database === "ready"
+            ? { kind: "online", health }
+            : { kind: "degraded", health },
+        );
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
+        if (error instanceof DOMException && error.name === "AbortError") return;
         setConnection({ kind: "offline" });
       }
     }
-
     void loadHealth();
     return () => controller.abort();
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-
     async function loadDashboard() {
       setDashboard({ kind: "loading" });
       try {
-        const data = await fetchDashboard(targetDate, controller.signal);
-        setDashboard({ kind: "ready", data });
+        setDashboard({
+          kind: "ready",
+          data: await fetchDashboard(targetDate, controller.signal),
+        });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
+        if (error instanceof DOMException && error.name === "AbortError") return;
         setDashboard({ kind: "error" });
       }
     }
-
     void loadDashboard();
     return () => controller.abort();
   }, [targetDate]);
@@ -222,220 +352,426 @@ export function App() {
   async function runDailyTask(retry = false) {
     setIsRunning(true);
     try {
-      const response = await fetch(retry ? "/api/tasks/daily/retry" : "/api/tasks/daily", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_date: targetDate }),
-      });
-      if (!response.ok) {
-        throw new Error(`每日任务接口返回 ${response.status}`);
-      }
+      const response = await fetch(
+        retry ? "/api/tasks/daily/retry" : "/api/tasks/daily",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_date: targetDate }),
+        },
+      );
+      if (!response.ok) throw new Error(`每日任务接口返回 ${response.status}`);
     } catch {
-      // 失败状态已由后端记录；下面统一重新读取，继续保留最近成功快照。
+      // 后端保留失败状态，下面重新读取最近一次完整成功结果。
     } finally {
       try {
-        const data = await fetchDashboard(targetDate);
-        setDashboard({ kind: "ready", data });
+        setDashboard({
+          kind: "ready",
+          data: await fetchDashboard(targetDate),
+        });
       } catch {
         setDashboard({ kind: "error" });
       }
-      try {
-        await refreshTaskHistory();
-      } catch {
-        // 历史是辅助视图，读取失败不能隐藏已经成功读取的仪表盘。
-      }
+      await refreshTaskHistory().catch(() => undefined);
       setIsRunning(false);
     }
   }
 
-  const status = connectionCopy(connection);
+  const failureBanner =
+    dashboardData?.failure ? (
+      <section className="failure-banner" role="alert" aria-labelledby="failure-title">
+        <div>
+          <p className="section-kicker">发布保护已生效</p>
+          <h2 id="failure-title">今日更新失败</h2>
+          <p>
+            继续展示 {dashboardData.actual_data_date ?? "最近一次"} 的完整成功结果，
+            本次失败未覆盖已发布快照。
+          </p>
+        </div>
+        <dl>
+          <div>
+            <dt>失败阶段</dt>
+            <dd data-testid="failure-stage">{dashboardData.failure.stage_label}</dd>
+          </div>
+          <div>
+            <dt>失败时间</dt>
+            <dd>{formatBeijingDateTime(dashboardData.failure.failed_at)}</dd>
+          </div>
+          <div>
+            <dt>错误摘要</dt>
+            <dd>{dashboardData.failure.error_summary}</dd>
+          </div>
+        </dl>
+        <button
+          type="button"
+          disabled={isRunning}
+          onClick={() => void runDailyTask(true)}
+        >
+          {isRunning ? "正在重新运行…" : "重新运行今日任务"}
+        </button>
+      </section>
+    ) : null;
 
   return (
-    <main className="dashboard-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">A 股市场与策略复盘</p>
-          <h1>Fourseasquant</h1>
-        </div>
-        <div className="topbar-actions">
-          <button type="button" onClick={() => setSettingsOpen(true)}>设置</button>
-          <div className="local-only">本机专用 · 日频</div>
-        </div>
-      </header>
-
-      {dashboard.kind === "ready" && dashboard.data.failure && (
-        <section className="failure-banner" role="alert" aria-labelledby="failure-title">
-          <div>
-            <p className="section-kicker">最近一次任务</p>
-            <h2 id="failure-title">今日更新失败</h2>
-            <p>
-              继续展示 {dashboard.data.actual_data_date ?? "最近一次"} 的完整成功结果，
-              本次失败未覆盖已发布快照。
-            </p>
+    <div className={`application-frame${sidebarCollapsed ? " application-frame--collapsed" : ""}`}>
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      <aside className="app-sidebar">
+        <div className="brand-lockup">
+          <BrandMark compact={sidebarCollapsed} />
+          <div className="brand-copy">
+            <h1>Fourseasquant</h1>
+            <span>A 股量化工作台</span>
           </div>
-          <dl>
-            <div><dt>失败阶段</dt><dd data-testid="failure-stage">{dashboard.data.failure.stage_label}</dd></div>
-            <div><dt>失败时间</dt><dd>{new Date(dashboard.data.failure.failed_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}</dd></div>
-            <div><dt>错误摘要</dt><dd>{dashboard.data.failure.error_summary}</dd></div>
-          </dl>
-          <button type="button" disabled={isRunning} onClick={() => void runDailyTask(true)}>
-            {isRunning ? "正在重新运行…" : "重新运行今日任务"}
-          </button>
-        </section>
-      )}
-
-      <section className="status-panel" aria-labelledby="application-status">
-        <div>
-          <p className="section-kicker">系统</p>
-          <h2 id="application-status">应用状态</h2>
-          <p>{status.detail}</p>
-        </div>
-        <span className={`status-pill status-pill--${status.tone}`}>{status.label}</span>
-      </section>
-
-      <section className="snapshot-panel" aria-labelledby="daily-snapshot-status">
-        <div className="snapshot-heading">
-          <div>
-            <p className="section-kicker">每日快照</p>
-            <h2 id="daily-snapshot-status">目标日期与发布状态</h2>
-          </div>
-          <label className="date-control">
-            <span>目标日期</span>
-            <input
-              type="date"
-              value={targetDate}
-              disabled={isRunning}
-              onChange={(event) => setTargetDate(event.target.value)}
-            />
-          </label>
         </div>
 
-        {dashboard.kind === "loading" && (
-          <p className="snapshot-message">正在读取目标日期状态…</p>
-        )}
-        {dashboard.kind === "error" && (
-          <p className="snapshot-message snapshot-message--error">
-            无法读取或运行每日任务，请确认本地服务状态。
-          </p>
-        )}
-        {dashboard.kind === "ready" && (
-          <div className="snapshot-content">
-            <dl className="snapshot-facts">
-              <div>
-                <dt>任务状态</dt>
-                <dd data-testid="task-status">
-                  {isRunning
-                    ? taskStatusLabels.running
-                    : taskStatusLabels[dashboard.data.task_status]}
-                </dd>
-              </div>
-              <div>
-                <dt>目标日期</dt>
-                <dd>{dashboard.data.target_date}</dd>
-              </div>
-              <div>
-                <dt>实际数据日期</dt>
-                <dd data-testid="actual-data-date">
-                  {dashboard.data.actual_data_date ?? "尚无已发布快照"}
-                </dd>
-              </div>
-              <div>
-                <dt>最近更新时间</dt>
-                <dd>
-                  {dashboard.data.last_updated_at
-                    ? new Date(dashboard.data.last_updated_at).toLocaleString("zh-CN", {
-                        timeZone: "Asia/Shanghai",
-                        hour12: false,
-                      })
-                    : "—"}
-                </dd>
-              </div>
-            </dl>
-            <div className="snapshot-action">
-              <p>
-                {dashboard.data.snapshot?.label ?? "尚无已发布快照"}
-              </p>
-              <button
-                type="button"
-                disabled={isRunning}
-                onClick={() => void runDailyTask(false)}
-              >
-                {isRunning ? "正在运行…" : "运行目标日期任务"}
-              </button>
+        <nav className="primary-nav" aria-label="主要导航">
+          {pages.map((page) => (
+            <NavLink
+              key={page.path}
+              to={`${page.path}${linkSearch}`}
+              aria-label={page.label}
+              className={({ isActive }) =>
+                `primary-nav__link${isActive ? " primary-nav__link--active" : ""}`
+              }
+            >
+              <span className="primary-nav__glyph">{page.shortLabel}</span>
+              <span className="primary-nav__label">{page.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-status">
+            <span className={`status-dot status-dot--${status.tone}`} />
+            <div>
+              <strong>{status.label}</strong>
+              <small>仅在本机运行</small>
             </div>
           </div>
-        )}
-      </section>
-
-      <TechnicalLeadershipPanel
-        targetDate={targetDate}
-        onSelectSecurity={selectInstrument}
-      />
-
-      <RealMarketDashboard targetDate={targetDate} onSelectSecurity={selectInstrument} />
-
-      <KlineExplorer
-        targetDate={targetDate}
-        selection={selectedInstrument}
-        onSelectionChange={selectInstrument}
-      />
-
-      <section className="task-history" aria-labelledby="task-history-title">
-        <div className="snapshot-heading">
-          <div>
-            <p className="section-kicker">运行记录</p>
-            <h2 id="task-history-title">任务历史</h2>
-          </div>
-          <span>最近 {taskHistory.length} 条</span>
+          <button
+            className="sidebar-collapse"
+            type="button"
+            aria-label={sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
+            onClick={toggleSidebar}
+          >
+            <span aria-hidden="true">{sidebarCollapsed ? "›" : "‹"}</span>
+            <span className="primary-nav__label">折叠侧栏</span>
+          </button>
         </div>
-        {taskHistory.length === 0 ? (
-          <p className="snapshot-message">尚无任务记录。</p>
-        ) : (
-          <div className="table-scroll">
-            <table>
-              <thead><tr><th>目标日期</th><th>触发</th><th>开始</th><th>结束</th><th>阶段</th><th>状态 / 摘要</th></tr></thead>
-              <tbody>
-                {taskHistory.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.target_date}</td>
-                    <td>{({ manual: "手动", retry: "重试", backfill: "补算", scheduled: "定时" } as Record<string, string>)[item.trigger_method] ?? item.trigger_method}</td>
-                    <td>{new Date(item.started_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}</td>
-                    <td>{item.finished_at ? new Date(item.finished_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "—"}</td>
-                    <td>{item.stage_label}</td>
-                    <td className={item.status === "failed" ? "history-failed" : "history-succeeded"}>{item.status === "failed" ? `失败 · ${item.error_summary ?? "查看本机日志"}` : item.status === "succeeded" ? "成功" : "运行中"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      </aside>
+
+      <main className="app-main" id="main-content">
+        <header className="page-topbar">
+          <div>
+            <p className="page-context">Fourseasquant / {currentPage.label}</p>
+            <h2>{currentPage.title}</h2>
+            <p>{currentPage.description}</p>
           </div>
-        )}
-      </section>
+          <div className="page-actions">
+            <label className="date-control">
+              <span>目标日期</span>
+              <input
+                type="date"
+                value={targetDate}
+                disabled={isRunning}
+                onChange={(event) => updateTargetDate(event.target.value)}
+              />
+            </label>
+            <button
+              className="settings-trigger"
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+            >
+              设置
+            </button>
+          </div>
+        </header>
 
-      {dashboard.kind === "ready" && dashboard.data.snapshot && (
-        <StrategyPerformance data={dashboard.data.snapshot.strategy_performance} />
-      )}
+        {failureBanner}
 
-      {dashboard.kind === "ready" && dashboard.data.snapshot && (
-        <PortfolioReview data={dashboard.data.snapshot.portfolio_review} onSelectSecurity={selectInstrument} />
-      )}
+        <div className="page-content">
+          <Routes>
+            <Route path="/" element={<Navigate to={`/overview${linkSearch}`} replace />} />
+            <Route
+              path="/overview"
+              element={
+                <>
+                  <section className="overview-hero">
+                    <div>
+                      <p className="section-kicker">收盘后 · 日频</p>
+                      <h2>
+                        {dashboardData?.actual_data_date
+                          ? `${dashboardData.actual_data_date} 数据视图`
+                          : "等待第一份完整结果"}
+                      </h2>
+                      <p>
+                        {snapshot?.label ??
+                          "运行目标日期任务后，这里会连接市场、策略与技术证据。"}
+                      </p>
+                    </div>
+                    <div className="overview-hero__signal" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </section>
 
-      <ReviewNotes
-        reviewDate={
-          dashboard.kind === "ready" ? dashboard.data.actual_data_date : null
-        }
-      />
+                  <section className="overview-summary-grid" aria-label="系统与发布摘要">
+                    <article>
+                      <span>本机服务</span>
+                      <strong>{status.label}</strong>
+                      <small>{status.detail}</small>
+                    </article>
+                    <article>
+                      <span>实际数据日期</span>
+                      <strong data-testid="actual-data-date">
+                        {dashboardData?.actual_data_date ?? "尚无已发布快照"}
+                      </strong>
+                      <small>目标日期 {targetDate}</small>
+                    </article>
+                    <article>
+                      <span>每日任务</span>
+                      <strong data-testid="task-status">
+                        {isRunning
+                          ? taskStatusLabels.running
+                          : dashboardData
+                            ? taskStatusLabels[dashboardData.task_status]
+                            : "读取中"}
+                      </strong>
+                      <small>{formatBeijingDateTime(dashboardData?.last_updated_at ?? null)}</small>
+                    </article>
+                    <article>
+                      <span>策略当日收益</span>
+                      <strong
+                        className={
+                          snapshot
+                            ? `metric-value--${movementTone(
+                                snapshot.strategy_performance.daily_summary.strategy_return_pct,
+                              )}`
+                            : undefined
+                        }
+                      >
+                        {snapshot
+                          ? signedPercentage(
+                              snapshot.strategy_performance.daily_summary.strategy_return_pct,
+                            )
+                          : "等待运行"}
+                      </strong>
+                      <small>
+                        {snapshot
+                          ? `超额 ${signedPercentage(
+                              snapshot.strategy_performance.daily_summary.excess_return_pct,
+                            )}`
+                          : "尚无策略结果"}
+                      </small>
+                    </article>
+                  </section>
 
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onBackfillCompleted={() => {
-          void fetchDashboard(targetDate)
-            .then((data) => setDashboard({ kind: "ready", data }))
-            .catch(() => undefined);
-          void refreshTaskHistory().catch(() => undefined);
-        }}
-      />
+                  <TechnicalLeadershipPanel
+                    compact
+                    targetDate={targetDate}
+                    onSelectSecurity={selectInstrument}
+                  />
 
-    </main>
+                  <ReviewNotes reviewDate={dashboardData?.actual_data_date ?? null} />
+                </>
+              }
+            />
+            <Route
+              path="/market"
+              element={
+                <RealMarketDashboard
+                  targetDate={targetDate}
+                  onSelectSecurity={selectInstrument}
+                />
+              }
+            />
+            <Route
+              path="/quotes"
+              element={
+                <KlineExplorer
+                  targetDate={targetDate}
+                  selection={selectedInstrument}
+                  onSelectionChange={selectInstrument}
+                />
+              }
+            />
+            <Route
+              path="/strategy"
+              element={
+                <>
+                  <TechnicalLeadershipPanel
+                    targetDate={targetDate}
+                    onSelectSecurity={selectInstrument}
+                  />
+                  {snapshot ? (
+                    <>
+                      <StrategyPerformance data={snapshot.strategy_performance} />
+                      <PortfolioReview
+                        data={snapshot.portfolio_review}
+                        onSelectSecurity={selectInstrument}
+                      />
+                    </>
+                  ) : (
+                    <PageEmptyState
+                      title="尚无策略结果"
+                      detail="在任务中心运行目标日期任务后，这里会展示策略、基准、持仓与交易。"
+                    />
+                  )}
+                </>
+              }
+            />
+            <Route
+              path="/tasks"
+              element={
+                <>
+                  <section className="status-panel" aria-labelledby="application-status">
+                    <div>
+                      <p className="section-kicker">本机运行环境</p>
+                      <h2 id="application-status">应用状态</h2>
+                      <p>{status.detail}</p>
+                    </div>
+                    <span className={`status-pill status-pill--${status.tone}`}>
+                      {status.label}
+                    </span>
+                  </section>
+
+                  <section className="snapshot-panel" aria-labelledby="daily-snapshot-status">
+                    <div className="snapshot-heading">
+                      <div>
+                        <p className="section-kicker">每日快照</p>
+                        <h2 id="daily-snapshot-status">目标日期与发布状态</h2>
+                      </div>
+                      <span className="task-target-date">{targetDate}</span>
+                    </div>
+
+                    {dashboard.kind === "loading" && (
+                      <p className="snapshot-message">正在读取目标日期状态…</p>
+                    )}
+                    {dashboard.kind === "error" && (
+                      <p className="snapshot-message snapshot-message--error">
+                        无法读取或运行每日任务，请确认本地服务状态。
+                      </p>
+                    )}
+                    {dashboardData && (
+                      <div className="snapshot-content">
+                        <dl className="snapshot-facts">
+                          <div>
+                            <dt>任务状态</dt>
+                            <dd data-testid="task-status">
+                              {isRunning
+                                ? taskStatusLabels.running
+                                : taskStatusLabels[dashboardData.task_status]}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>目标日期</dt>
+                            <dd>{dashboardData.target_date}</dd>
+                          </div>
+                          <div>
+                            <dt>实际数据日期</dt>
+                            <dd data-testid="actual-data-date">
+                              {dashboardData.actual_data_date ?? "尚无已发布快照"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>最近更新时间</dt>
+                            <dd>{formatBeijingDateTime(dashboardData.last_updated_at)}</dd>
+                          </div>
+                        </dl>
+                        <div className="snapshot-action">
+                          <p>{snapshot?.label ?? "尚无已发布快照"}</p>
+                          <button
+                            type="button"
+                            disabled={isRunning}
+                            onClick={() => void runDailyTask(false)}
+                          >
+                            {isRunning ? "正在运行…" : "运行目标日期任务"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="task-history" aria-labelledby="task-history-title">
+                    <div className="snapshot-heading">
+                      <div>
+                        <p className="section-kicker">运行记录</p>
+                        <h2 id="task-history-title">任务历史</h2>
+                      </div>
+                      <span>最近 {taskHistory.length} 条</span>
+                    </div>
+                    {taskHistory.length === 0 ? (
+                      <p className="snapshot-message">尚无任务记录。</p>
+                    ) : (
+                      <div className="table-scroll">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>目标日期</th>
+                              <th>触发</th>
+                              <th>开始</th>
+                              <th>结束</th>
+                              <th>阶段</th>
+                              <th>状态 / 摘要</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {taskHistory.map((item) => (
+                              <tr key={item.id}>
+                                <td>{item.target_date}</td>
+                                <td>
+                                  {(
+                                    {
+                                      manual: "手动",
+                                      retry: "重试",
+                                      backfill: "补算",
+                                      scheduled: "定时",
+                                    } as Record<string, string>
+                                  )[item.trigger_method] ?? item.trigger_method}
+                                </td>
+                                <td>{formatBeijingDateTime(item.started_at)}</td>
+                                <td>{formatBeijingDateTime(item.finished_at)}</td>
+                                <td>{item.stage_label}</td>
+                                <td
+                                  className={
+                                    item.status === "failed"
+                                      ? "history-failed"
+                                      : "history-succeeded"
+                                  }
+                                >
+                                  {item.status === "failed"
+                                    ? `失败 · ${item.error_summary ?? "查看本机日志"}`
+                                    : item.status === "succeeded"
+                                      ? "成功"
+                                      : "运行中"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+                </>
+              }
+            />
+            <Route path="*" element={<Navigate to={`/overview${linkSearch}`} replace />} />
+          </Routes>
+        </div>
+
+        <SettingsPanel
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onBackfillCompleted={() => {
+            void fetchDashboard(targetDate)
+              .then((data) => setDashboard({ kind: "ready", data }))
+              .catch(() => undefined);
+            void refreshTaskHistory().catch(() => undefined);
+          }}
+        />
+      </main>
+    </div>
   );
 }

@@ -635,7 +635,10 @@ class LocalApplicationTest(unittest.TestCase):
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:
             page = response.read().decode("utf-8")
 
-        self.assertIn("<title>Fourseasquant</title>", page)
+        self.assertIn(
+            "<title>Fourseasquant · A 股量化工作台</title>",
+            page,
+        )
         self.assertIn("Fourseasquant", page)
         self.assertIn("应用状态", page)
         self.assertIn('data-theme="dark"', page)
@@ -684,7 +687,10 @@ class DevelopmentCommandTest(unittest.TestCase):
                     self.fail("开发命令未在十秒内同时启动前端和后端")
 
                 self.assertEqual(health["database"], "ready")
-                self.assertIn("<title>Fourseasquant</title>", page)
+                self.assertIn(
+                    "<title>Fourseasquant · A 股量化工作台</title>",
+                    page,
+                )
             finally:
                 if process.poll() is None:
                     os.killpg(os.getpgid(process.pid), signal.SIGTERM)

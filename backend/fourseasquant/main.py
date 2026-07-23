@@ -10,6 +10,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -390,6 +391,23 @@ def put_settings(settings: SettingsUpdate) -> SettingsResponse:
 
 FRONTEND_DISTRIBUTION = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if FRONTEND_DISTRIBUTION.is_dir():
+    def frontend_page() -> FileResponse:
+        return FileResponse(FRONTEND_DISTRIBUTION / "index.html")
+
+    for frontend_route in (
+        "/overview",
+        "/market",
+        "/quotes",
+        "/strategy",
+        "/tasks",
+    ):
+        app.add_api_route(
+            frontend_route,
+            frontend_page,
+            methods=["GET"],
+            include_in_schema=False,
+        )
+
     app.mount(
         "/",
         StaticFiles(directory=FRONTEND_DISTRIBUTION, html=True),
