@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "SectorMembership": {
+      "properties": {
+        "change_reason": {
+          "title": "Change Reason",
+          "type": "string"
+        },
+        "code": {
+          "pattern": "^\\d{6}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "effective_from": {
+          "format": "date",
+          "title": "Effective From",
+          "type": "string"
+        },
+        "effective_to": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effective To"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "is_active": {
+          "default": true,
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "sector_id": {
+          "minLength": 1,
+          "title": "Sector Id",
+          "type": "string"
+        },
+        "sector_name": {
+          "minLength": 1,
+          "title": "Sector Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sector_id",
+        "sector_name",
+        "code",
+        "effective_from",
+        "change_reason"
+      ],
+      "title": "SectorMembership",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "effective_date": {
+      "format": "date",
+      "title": "Effective Date",
+      "type": "string"
+    },
+    "fundamental_version": {
+      "minLength": 1,
+      "title": "Fundamental Version",
+      "type": "string"
+    },
+    "membership_version": {
+      "minLength": 1,
+      "title": "Membership Version",
+      "type": "string"
+    },
+    "memberships": {
+      "items": {
+        "$ref": "#/$defs/SectorMembership"
+      },
+      "title": "Memberships",
+      "type": "array"
+    },
+    "published_at": {
+      "format": "date-time",
+      "title": "Published At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "membership_version",
+    "fundamental_version",
+    "effective_date",
+    "published_at",
+    "complete",
+    "memberships"
+  ],
+  "title": "SectorMembershipSnapshot",
+  "type": "object"
+}

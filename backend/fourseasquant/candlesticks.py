@@ -24,6 +24,7 @@ INDEXES: dict[str, str] = {
     "sz399001": "深证成指",
     "sh000300": "沪深 300",
     "sz399006": "创业板指",
+    "sh000688": "科创 50",
 }
 INDEX_SOURCE_PREFIX = "akshare_index_"
 IndexHistoryFactory = Callable[[str], pd.DataFrame]
@@ -81,6 +82,7 @@ def import_index_candles(
     *,
     requested_end_date: date,
     index_history: IndexHistoryFactory,
+    warmup_trading_days: int = 0,
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for symbol, name in INDEXES.items():
@@ -89,11 +91,21 @@ def import_index_candles(
             raise CandleDataNotFound(f"{name} 没有返回历史数据")
         frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.date
         frame = frame[frame["date"] <= requested_end_date]
-        frame = frame.sort_values("date").drop_duplicates("date", keep="last")
+        frame = (
+            frame.sort_values("date")
+            .drop_duplicates("date", keep="last")
+            .reset_index(drop=True)
+        )
         if frame.empty:
             raise CandleDataNotFound(f"{name} 在目标日期前没有历史数据")
         range_end = cast(date, frame.iloc[-1]["date"])
-        range_start = _one_year_start(range_end)
+        official_start = _one_year_start(range_end)
+        official_rows = frame[frame["date"] >= official_start]
+        if official_rows.empty:
+            raise CandleDataNotFound(f"{name} 最近一年没有历史数据")
+        official_index = int(official_rows.index[0])
+        start_index = max(0, official_index - max(0, warmup_trading_days))
+        range_start = cast(date, frame.loc[start_index, "date"])
         rows = frame[frame["date"] >= range_start].to_dict("records")
         for row in rows:
             trading_date = _date_value(row.get("date"))
@@ -121,6 +133,7 @@ def publish_complete_candle_dates(
     *,
     qfq_source: str = HISTORY_QFQ_SOURCE,
     published_at: datetime | None = None,
+    publication_start: date | None = None,
 ) -> int:
     publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
     with sqlite3.connect(path) as connection:
@@ -137,6 +150,11 @@ def publish_complete_candle_dates(
         published = 0
         with connection:
             for date_text in sorted(candidates):
+                if (
+                    publication_start is not None
+                    and date_text < publication_start.isoformat()
+                ):
+                    continue
                 raw_codes = _codes_for_date(connection, HISTORY_SOURCE, date_text)
                 qfq_codes = _codes_for_date(connection, qfq_source, date_text)
                 if not raw_codes or raw_codes != qfq_codes:

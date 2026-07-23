@@ -4,10 +4,13 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Fourseasquant" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "个股技术评分尚未初始化" }),
+  ).toBeVisible();
   await page.getByRole("textbox", { name: "目标日期" }).fill("2026-07-20");
   await expect(page.getByTestId("task-status")).toHaveText("尚未运行");
   await expect(page.getByTestId("actual-data-date")).toHaveText("尚无已发布快照");
-  await expect(page.getByText("尚无板块快照，请先运行目标日期任务。")).toBeVisible();
+  await expect(page.getByText("当前不会生成模拟板块龙头")).toBeVisible();
 
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByLabel("自动更新时间").fill("16:45");
@@ -27,13 +30,7 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await expect(page.getByText("目标日期前尚无 AKShare 真实历史数据。")).toBeVisible();
   await expect(page.getByText("综合情绪分数")).toHaveCount(0);
 
-  await expect(page.getByRole("heading", { name: "板块与概念强弱" })).toBeVisible();
-  await expect(page.getByTestId("sector-leaders").locator("li")).toHaveCount(10);
-  await expect(page.getByTestId("sector-laggards").locator("li")).toHaveCount(10);
-  await page.getByRole("button", { name: "概念板块" }).click();
-  await expect(page.getByTestId("sector-category-label")).toContainText("概念板块");
-  await page.getByRole("button", { name: "热力图" }).click();
-  await expect(page.getByTestId("sector-heatmap").locator("div")).toHaveCount(24);
+  await expect(page.getByRole("heading", { name: "板块与概念强弱" })).toHaveCount(0);
 
   await expect(page.getByRole("heading", { name: "策略业绩复盘" })).toBeVisible();
   await expect(page.getByText("演示策略数据")).toBeVisible();

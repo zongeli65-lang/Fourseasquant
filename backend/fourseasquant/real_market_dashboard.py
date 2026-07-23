@@ -141,6 +141,8 @@ def read_real_market_dashboard(
             WHERE facts.source = ?
               AND facts.actual_data_date <= ?
               AND facts.listing_trading_days >= 60
+              AND facts.code NOT LIKE '30%'
+              AND facts.code NOT LIKE '68%'
             GROUP BY facts.actual_data_date, benchmark.close
             ORDER BY facts.actual_data_date
             """,
@@ -152,6 +154,8 @@ def read_real_market_dashboard(
             FROM historical_security_facts
             WHERE source = ? AND actual_data_date = ?
               AND listing_trading_days >= 60
+              AND code NOT LIKE '30%'
+              AND code NOT LIKE '68%'
             ORDER BY code
             """,
             (HISTORY_SOURCE, actual_data_date.isoformat()),
@@ -280,6 +284,8 @@ def read_overview_securities(
             FROM historical_security_facts
             WHERE source = ? AND actual_data_date = ?
               AND listing_trading_days >= 60
+              AND code NOT LIKE '30%'
+              AND code NOT LIKE '68%'
             ORDER BY code
             """,
             (HISTORY_SOURCE, actual_date.isoformat()),

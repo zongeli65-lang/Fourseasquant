@@ -1,9 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  SectorPerformance,
-  type SectorPerformanceData,
-} from "./SectorPerformance";
-import {
   StrategyPerformance,
   type StrategyPerformanceData,
 } from "./StrategyPerformance";
@@ -12,6 +8,7 @@ import { PortfolioReview, type PortfolioReviewData } from "./PortfolioReview";
 import { SettingsPanel } from "./SettingsPanel";
 import { RealMarketDashboard } from "./RealMarketDashboard";
 import { KlineExplorer, type InstrumentSelection } from "./KlineExplorer";
+import { TechnicalLeadershipPanel } from "./TechnicalLeadershipPanel";
 
 type HealthStatus = {
   application: string;
@@ -31,7 +28,6 @@ type DashboardSnapshot = {
   source: string;
   label: string;
   seed: number;
-  sector_performance: SectorPerformanceData;
   strategy_performance: StrategyPerformanceData;
   portfolio_review: PortfolioReviewData;
 };
@@ -371,6 +367,11 @@ export function App() {
         )}
       </section>
 
+      <TechnicalLeadershipPanel
+        targetDate={targetDate}
+        onSelectSecurity={selectInstrument}
+      />
+
       <RealMarketDashboard targetDate={targetDate} onSelectSecurity={selectInstrument} />
 
       <KlineExplorer
@@ -409,14 +410,6 @@ export function App() {
           </div>
         )}
       </section>
-
-      <SectorPerformance
-        data={
-          dashboard.kind === "ready"
-            ? (dashboard.data.snapshot?.sector_performance ?? null)
-            : null
-        }
-      />
 
       {dashboard.kind === "ready" && dashboard.data.snapshot && (
         <StrategyPerformance data={dashboard.data.snapshot.strategy_performance} />

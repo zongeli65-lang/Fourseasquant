@@ -1,0 +1,785 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path
+from typing import Literal, cast
+from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel, Field
+
+from fourseasquant.akshare_history import HISTORY_SOURCE
+from fourseasquant.candlesticks import index_source
+
+
+ALGORITHM_VERSION = "technical-v1"
+Board = Literal["main", "chinext", "star"]
+DerivativeState = Literal["positive", "zero", "negative"]
+StructureState = Literal["forming", "candidate", "strong", "broken"]
+
+
+class TechnicalParameters(BaseModel):
+    ema_span: int = Field(default=3, ge=2)
+    atr_period: int = Field(default=10, ge=3)
+    zero_band_atr: float = Field(default=0.10, gt=0)
+    effective_lift_atr: float = Field(default=0.10, gt=0)
+    lift_score_cap_atr: float = Field(default=3.0, gt=0)
+    structure_weight: float = 55.0
+    breakout_weight: float = 20.0
+    relative_strength_weight: float = 15.0
+    turnover_weight: float = 10.0
+    minimum_leader_score: float = 65.0
+    direct_challenge_margin: float = 10.0
+    confirmed_challenge_margin: float = 3.0
+    challenge_confirmation_days: int = 2
+    minimum_sector_members: int = 3
+
+
+DEFAULT_PARAMETERS = TechnicalParameters()
+
+
+class ExtremumView(BaseModel):
+    kind: Literal["maximum", "minimum"]
+    date: date
+    value: float
+
+
+class TechnicalScoreView(BaseModel):
+    version: str
+    actual_data_date: date
+    code: str
+    name: str
+    board: Board
+    ema3: float
+    derivative: float
+    derivative_state: DerivativeState
+    zero_threshold: float
+    atr10: float
+    structure_state: StructureState
+    structure_valid: bool
+    active_breakout: bool
+    structure_score: float
+    breakout_score: float
+    relative_strength_score: float
+    turnover_score: float
+    total_score: float
+    maxima: list[ExtremumView]
+    minima: list[ExtremumView]
+    evidence: dict[str, object]
+
+
+class TechnicalScorePublication(BaseModel):
+    version: str
+    official_start: date
+    official_end: date
+    qfq_source: str
+    symbol_count: int
+    score_count: int
+    published_at: datetime
+
+
+class TechnicalScoreStatus(BaseModel):
+    status: Literal["not_initialized", "ready"]
+    publication: TechnicalScorePublication | None
+    parameters: TechnicalParameters
+
+
+@dataclass(frozen=True)
+class _PriceRow:
+    trading_date: date
+    code: str
+    name: str
+    open: float
+    high: float
+    low: float
+    close: float
+    previous_close: float
+    turnover_cny: int
+
+
+@dataclass
+class _Extremum:
+    kind: Literal["maximum", "minimum"]
+    trading_date: date
+    value: float
+
+
+def score_technical_history(
+    path: Path,
+    *,
+    official_start: date,
+    official_end: date,
+    qfq_source: str,
+    parameters: TechnicalParameters = DEFAULT_PARAMETERS,
+    version: str = ALGORITHM_VERSION,
+    published_at: datetime | None = None,
+    activate: bool = True,
+) -> TechnicalScorePublication:
+    """Compute a complete score batch and optionally make it reader-visible."""
+    rows = _load_price_rows(path, qfq_source, official_end)
+    if not rows:
+        raise ValueError("前复权行情为空，无法初始化技术评分")
+    benchmark_closes = _load_benchmark_closes(path, official_end)
+    grouped = _group_rows(rows)
+    publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
+    parameters_json = parameters.model_dump_json()
+    score_count = 0
+
+    with sqlite3.connect(path) as connection:
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO technical_score_versions (
+                    version, parameters_json, created_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(version) DO NOTHING
+                """,
+                (version, parameters_json, publication_time.isoformat()),
+            )
+            stored_parameters = connection.execute(
+                """
+                SELECT parameters_json
+                FROM technical_score_versions
+                WHERE version = ?
+                """,
+                (version,),
+            ).fetchone()
+            if stored_parameters is None or stored_parameters[0] != parameters_json:
+                raise ValueError("同一技术算法版本不允许修改参数")
+            connection.execute(
+                """
+                DELETE FROM technical_daily_scores
+                WHERE version = ? AND qfq_source = ?
+                  AND actual_data_date BETWEEN ? AND ?
+                """,
+                (
+                    version,
+                    qfq_source,
+                    official_start.isoformat(),
+                    official_end.isoformat(),
+                ),
+            )
+            for code, history in grouped.items():
+                calculated = _score_symbol(
+                    history,
+                    benchmark_closes=benchmark_closes,
+                    official_start=official_start,
+                    official_end=official_end,
+                    qfq_source=qfq_source,
+                    parameters=parameters,
+                    version=version,
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO technical_daily_scores (
+                        version, actual_data_date, code, name, board,
+                        qfq_source, ema3, derivative, derivative_state,
+                        zero_threshold, atr10, structure_state,
+                        structure_valid, active_breakout, structure_score,
+                        breakout_score, relative_strength_score,
+                        turnover_score, total_score, extrema_json,
+                        evidence_json
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?
+                    )
+                    """,
+                    (_database_values(item, qfq_source) for item in calculated),
+                )
+                score_count += len(calculated)
+            if score_count == 0:
+                raise ValueError("正式区间没有可发布的技术评分")
+            if activate:
+                connection.execute(
+                    """
+                    INSERT INTO technical_score_publications (
+                        version, official_start, official_end, qfq_source,
+                        symbol_count, score_count, published_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(version, official_start, official_end)
+                    DO UPDATE SET
+                        qfq_source = excluded.qfq_source,
+                        symbol_count = excluded.symbol_count,
+                        score_count = excluded.score_count,
+                        published_at = excluded.published_at
+                    """,
+                    (
+                        version,
+                        official_start.isoformat(),
+                        official_end.isoformat(),
+                        qfq_source,
+                        len(grouped),
+                        score_count,
+                        publication_time.isoformat(),
+                    ),
+                )
+    return TechnicalScorePublication(
+        version=version,
+        official_start=official_start,
+        official_end=official_end,
+        qfq_source=qfq_source,
+        symbol_count=len(grouped),
+        score_count=score_count,
+        published_at=publication_time,
+    )
+
+
+def read_technical_score_status(path: Path) -> TechnicalScoreStatus:
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT version, official_start, official_end, qfq_source,
+                   symbol_count, score_count, published_at
+            FROM technical_score_publications
+            ORDER BY official_end DESC, published_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return TechnicalScoreStatus(
+                status="not_initialized",
+                publication=None,
+                parameters=DEFAULT_PARAMETERS,
+            )
+        version_row = connection.execute(
+            """
+            SELECT parameters_json
+            FROM technical_score_versions
+            WHERE version = ?
+            """,
+            (row[0],),
+        ).fetchone()
+    parameters = (
+        TechnicalParameters.model_validate_json(cast(str, version_row[0]))
+        if version_row
+        else DEFAULT_PARAMETERS
+    )
+    return TechnicalScoreStatus(
+        status="ready",
+        publication=_publication_from_row(row),
+        parameters=parameters,
+    )
+
+
+def read_top_technical_scores(
+    path: Path,
+    *,
+    requested_date: date,
+    limit: int = 20,
+) -> list[TechnicalScoreView]:
+    status = read_technical_score_status(path)
+    if status.publication is None:
+        return []
+    version = status.publication.version
+    with sqlite3.connect(path) as connection:
+        actual_row = connection.execute(
+            """
+            SELECT MAX(actual_data_date)
+            FROM technical_daily_scores
+            WHERE version = ? AND qfq_source = ? AND actual_data_date <= ?
+            """,
+            (
+                version,
+                status.publication.qfq_source,
+                requested_date.isoformat(),
+            ),
+        ).fetchone()
+        if actual_row is None or actual_row[0] is None:
+            return []
+        rows = connection.execute(
+            """
+            SELECT version, actual_data_date, code, name, board, ema3,
+                   derivative, derivative_state, zero_threshold, atr10,
+                   structure_state, structure_valid, active_breakout,
+                   structure_score, breakout_score, relative_strength_score,
+                   turnover_score, total_score, extrema_json, evidence_json
+            FROM technical_daily_scores
+            WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
+            ORDER BY total_score DESC, structure_valid DESC,
+                     structure_score DESC, breakout_score DESC,
+                     relative_strength_score DESC, code
+            LIMIT ?
+            """,
+            (
+                version,
+                status.publication.qfq_source,
+                cast(str, actual_row[0]),
+                max(1, min(limit, 100)),
+            ),
+        ).fetchall()
+    return [_score_from_database_row(row) for row in rows]
+
+
+def _load_price_rows(
+    path: Path, qfq_source: str, official_end: date
+) -> list[_PriceRow]:
+    with sqlite3.connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT actual_data_date, code, name, open, high, low, close,
+                   previous_close, turnover_cny
+            FROM historical_security_facts
+            WHERE source = ? AND actual_data_date <= ?
+              AND listing_trading_days >= 60
+            ORDER BY code, actual_data_date
+            """,
+            (qfq_source, official_end.isoformat()),
+        ).fetchall()
+    return [
+        _PriceRow(
+            trading_date=date.fromisoformat(cast(str, row[0])),
+            code=cast(str, row[1]),
+            name=cast(str, row[2]),
+            open=float(row[3]),
+            high=float(row[4]),
+            low=float(row[5]),
+            close=float(row[6]),
+            previous_close=float(row[7]),
+            turnover_cny=int(row[8]),
+        )
+        for row in rows
+    ]
+
+
+def _load_benchmark_closes(
+    path: Path, official_end: date
+) -> dict[str, dict[date, float]]:
+    symbols = ("sh000001", "sz399001", "sh000300", "sz399006", "sh000688")
+    result: dict[str, dict[date, float]] = {}
+    with sqlite3.connect(path) as connection:
+        for symbol in symbols:
+            rows = connection.execute(
+                """
+                SELECT actual_data_date, close
+                FROM historical_benchmark_facts
+                WHERE source = ? AND actual_data_date <= ?
+                ORDER BY actual_data_date
+                """,
+                (index_source(symbol), official_end.isoformat()),
+            ).fetchall()
+            if not rows:
+                raise ValueError(f"缺少指数历史数据：{symbol}")
+            result[symbol] = {
+                date.fromisoformat(cast(str, row[0])): float(row[1])
+                for row in rows
+            }
+    return result
+
+
+def _group_rows(rows: Iterable[_PriceRow]) -> dict[str, list[_PriceRow]]:
+    grouped: dict[str, list[_PriceRow]] = {}
+    for row in rows:
+        grouped.setdefault(row.code, []).append(row)
+    return grouped
+
+
+def _score_symbol(
+    rows: list[_PriceRow],
+    *,
+    benchmark_closes: dict[str, dict[date, float]],
+    official_start: date,
+    official_end: date,
+    qfq_source: str,
+    parameters: TechnicalParameters,
+    version: str,
+) -> list[TechnicalScoreView]:
+    del qfq_source
+    alpha = 2 / (parameters.ema_span + 1)
+    ema_values: list[float] = []
+    atr_values: list[float] = []
+    true_ranges: list[float] = []
+    maxima: list[_Extremum] = []
+    minima: list[_Extremum] = []
+    last_trend: int | None = None
+    segment_index = 0
+    breakout_high = 0.0
+    breakout_streak = 0
+    scores: list[TechnicalScoreView] = []
+
+    for index, row in enumerate(rows):
+        ema = (
+            row.close
+            if index == 0
+            else alpha * row.close + (1 - alpha) * ema_values[-1]
+        )
+        ema_values.append(ema)
+        previous_close = rows[index - 1].close if index else row.previous_close
+        true_range = max(
+            row.high - row.low,
+            abs(row.high - previous_close),
+            abs(row.low - previous_close),
+        )
+        true_ranges.append(true_range)
+        atr_window = true_ranges[
+            max(0, index - parameters.atr_period + 1) : index + 1
+        ]
+        atr = max(sum(atr_window) / len(atr_window), row.close * 0.0001)
+        atr_values.append(atr)
+        derivative = ema - ema_values[index - 1] if index else 0.0
+        zero_threshold = atr * parameters.zero_band_atr
+        trend = 1 if derivative > zero_threshold else -1 if derivative < -zero_threshold else 0
+
+        if trend != 0:
+            if last_trend is None:
+                last_trend = trend
+                segment_index = index
+            elif trend == last_trend:
+                segment_index = _updated_segment_index(
+                    ema_values, segment_index, index, trend
+                )
+            else:
+                kind: Literal["maximum", "minimum"] = (
+                    "maximum" if last_trend > 0 else "minimum"
+                )
+                extremum = _Extremum(
+                    kind=kind,
+                    trading_date=rows[segment_index].trading_date,
+                    value=ema_values[segment_index],
+                )
+                (maxima if kind == "maximum" else minima).append(extremum)
+                last_trend = trend
+                segment_index = index
+        elif last_trend is not None:
+            segment_index = _updated_segment_index(
+                ema_values, segment_index, index, last_trend
+            )
+
+        peak_lifts = _normalized_lifts(maxima, atr)
+        trough_lifts = _normalized_lifts(minima, atr)
+        structure_valid = (
+            bool(peak_lifts)
+            and bool(trough_lifts)
+            and peak_lifts[-1] > parameters.effective_lift_atr
+            and trough_lifts[-1] > parameters.effective_lift_atr
+        )
+        strong = (
+            len(peak_lifts) >= 2
+            and len(trough_lifts) >= 2
+            and all(
+                lift > parameters.effective_lift_atr
+                for lift in peak_lifts[-2:] + trough_lifts[-2:]
+            )
+        )
+        broken = (
+            bool(peak_lifts)
+            and bool(trough_lifts)
+            and (
+                peak_lifts[-1] < -parameters.effective_lift_atr
+                or trough_lifts[-1] < -parameters.effective_lift_atr
+            )
+        )
+        structure_state: StructureState = (
+            "broken"
+            if broken
+            else "strong"
+            if strong
+            else "candidate"
+            if structure_valid
+            else "forming"
+        )
+        structure_score = _structure_score(
+            peak_lifts, trough_lifts, parameters
+        )
+
+        last_peak = maxima[-1].value if maxima else None
+        active_breakout = (
+            last_peak is not None
+            and trend > 0
+            and ema > last_peak + zero_threshold
+        )
+        if active_breakout:
+            if breakout_streak == 0 or ema >= breakout_high:
+                breakout_streak += 1
+                breakout_high = ema
+            else:
+                breakout_streak = 0
+            distance = (ema - cast(float, last_peak)) / atr
+            breakout_score = (
+                parameters.breakout_weight * 0.75
+                * min(max(distance, 0.0), parameters.lift_score_cap_atr)
+                / parameters.lift_score_cap_atr
+                + parameters.breakout_weight
+                * 0.25
+                * min(breakout_streak, 5)
+                / 5
+            )
+        else:
+            breakout_high = 0.0
+            breakout_streak = 0
+            breakout_score = 0.0
+
+        relative_score = _relative_strength_score(
+            rows,
+            index,
+            board=_board_for_code(row.code),
+            benchmark_closes=benchmark_closes,
+            weight=parameters.relative_strength_weight,
+        )
+        turnover_score = _turnover_score(
+            rows, index, parameters.turnover_weight
+        )
+        total_score = min(
+            100.0,
+            structure_score
+            + breakout_score
+            + relative_score
+            + turnover_score,
+        )
+        if not official_start <= row.trading_date <= official_end:
+            continue
+        scores.append(
+            TechnicalScoreView(
+                version=version,
+                actual_data_date=row.trading_date,
+                code=row.code,
+                name=row.name,
+                board=_board_for_code(row.code),
+                ema3=round(ema, 6),
+                derivative=round(derivative, 6),
+                derivative_state=_derivative_state(trend),
+                zero_threshold=round(zero_threshold, 6),
+                atr10=round(atr, 6),
+                structure_state=structure_state,
+                structure_valid=structure_valid,
+                active_breakout=active_breakout,
+                structure_score=round(structure_score, 4),
+                breakout_score=round(breakout_score, 4),
+                relative_strength_score=round(relative_score, 4),
+                turnover_score=round(turnover_score, 4),
+                total_score=round(total_score, 4),
+                maxima=_extrema_views(maxima[-3:]),
+                minima=_extrema_views(minima[-3:]),
+                evidence={
+                    "peak_lifts_atr": [round(value, 4) for value in peak_lifts[-2:]],
+                    "trough_lifts_atr": [
+                        round(value, 4) for value in trough_lifts[-2:]
+                    ],
+                    "breakout_streak": breakout_streak,
+                    "minimum_leader_score": parameters.minimum_leader_score,
+                },
+            )
+        )
+    return scores
+
+
+def _updated_segment_index(
+    values: list[float], current: int, candidate: int, trend: int
+) -> int:
+    if trend > 0 and values[candidate] >= values[current]:
+        return candidate
+    if trend < 0 and values[candidate] <= values[current]:
+        return candidate
+    return current
+
+
+def _normalized_lifts(
+    extrema: list[_Extremum], atr: float
+) -> list[float]:
+    return [
+        (extrema[index].value - extrema[index - 1].value) / atr
+        for index in range(1, len(extrema))
+    ]
+
+
+def _structure_score(
+    peak_lifts: list[float],
+    trough_lifts: list[float],
+    parameters: TechnicalParameters,
+) -> float:
+    def quality(values: list[float]) -> float:
+        if not values:
+            return 0.0
+        recent = values[-2:]
+        return sum(
+            min(max(value, 0.0), parameters.lift_score_cap_atr)
+            / parameters.lift_score_cap_atr
+            for value in recent
+        ) / len(recent)
+
+    return parameters.structure_weight * (
+        quality(peak_lifts) + quality(trough_lifts)
+    ) / 2
+
+
+def _relative_strength_score(
+    rows: list[_PriceRow],
+    index: int,
+    *,
+    board: Board,
+    benchmark_closes: dict[str, dict[date, float]],
+    weight: float,
+) -> float:
+    broad = benchmark_closes["sh000300"]
+    board_symbol = _board_benchmark(rows[index].code, board)
+    board_prices = benchmark_closes[board_symbol]
+    horizons = ((3, 5.0), (5, 8.0), (10, 12.0))
+    broad_scores: list[float] = []
+    board_scores: list[float] = []
+    for horizon, scale in horizons:
+        if index < horizon:
+            continue
+        current = rows[index]
+        previous = rows[index - horizon]
+        stock_return = (current.close / previous.close - 1) * 100
+        broad_return = _benchmark_return(
+            broad, current.trading_date, previous.trading_date
+        )
+        board_return = _benchmark_return(
+            board_prices, current.trading_date, previous.trading_date
+        )
+        broad_scores.append(_scaled_excess(stock_return - broad_return, scale))
+        board_scores.append(_scaled_excess(stock_return - board_return, scale))
+    if not broad_scores:
+        return 0.0
+    return weight * (
+        sum(broad_scores) / len(broad_scores)
+        + sum(board_scores) / len(board_scores)
+    ) / 2
+
+
+def _benchmark_return(
+    closes: dict[date, float], current: date, previous: date
+) -> float:
+    current_close = closes.get(current)
+    previous_close = closes.get(previous)
+    if current_close is None or previous_close is None or previous_close <= 0:
+        raise ValueError(f"指数在 {previous} 至 {current} 的数据不完整")
+    return (current_close / previous_close - 1) * 100
+
+
+def _scaled_excess(excess_pct: float, scale_pct: float) -> float:
+    return min(1.0, max(0.0, 0.5 + excess_pct / (2 * scale_pct)))
+
+
+def _turnover_score(
+    rows: list[_PriceRow], index: int, weight: float
+) -> float:
+    previous = rows[max(0, index - 10) : index]
+    if not previous:
+        return 0.0
+    average = sum(row.turnover_cny for row in previous) / len(previous)
+    if average <= 0:
+        return 0.0
+    ratio = rows[index].turnover_cny / average
+    return weight * min(max(ratio / 2, 0.0), 1.0)
+
+
+def _board_for_code(code: str) -> Board:
+    if code.startswith(("300", "301")):
+        return "chinext"
+    if code.startswith(("688", "689")):
+        return "star"
+    return "main"
+
+
+def _board_benchmark(code: str, board: Board) -> str:
+    if board == "chinext":
+        return "sz399006"
+    if board == "star":
+        return "sh000688"
+    return "sh000001" if code.startswith("6") else "sz399001"
+
+
+def _derivative_state(trend: int) -> DerivativeState:
+    return "positive" if trend > 0 else "negative" if trend < 0 else "zero"
+
+
+def _extrema_views(extrema: list[_Extremum]) -> list[ExtremumView]:
+    return [
+        ExtremumView(
+            kind=item.kind,
+            date=item.trading_date,
+            value=round(item.value, 6),
+        )
+        for item in extrema
+    ]
+
+
+def _database_values(
+    score: TechnicalScoreView, qfq_source: str
+) -> tuple[object, ...]:
+    extrema_json = json.dumps(
+        {
+            "maxima": [
+                item.model_dump(mode="json") for item in score.maxima
+            ],
+            "minima": [
+                item.model_dump(mode="json") for item in score.minima
+            ],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return (
+        score.version,
+        score.actual_data_date.isoformat(),
+        score.code,
+        score.name,
+        score.board,
+        qfq_source,
+        score.ema3,
+        score.derivative,
+        score.derivative_state,
+        score.zero_threshold,
+        score.atr10,
+        score.structure_state,
+        int(score.structure_valid),
+        int(score.active_breakout),
+        score.structure_score,
+        score.breakout_score,
+        score.relative_strength_score,
+        score.turnover_score,
+        score.total_score,
+        extrema_json,
+        json.dumps(score.evidence, ensure_ascii=False, sort_keys=True),
+    )
+
+
+def _publication_from_row(row: tuple[object, ...]) -> TechnicalScorePublication:
+    return TechnicalScorePublication(
+        version=cast(str, row[0]),
+        official_start=date.fromisoformat(cast(str, row[1])),
+        official_end=date.fromisoformat(cast(str, row[2])),
+        qfq_source=cast(str, row[3]),
+        symbol_count=int(str(row[4])),
+        score_count=int(str(row[5])),
+        published_at=datetime.fromisoformat(cast(str, row[6])),
+    )
+
+
+def _score_from_database_row(row: tuple[object, ...]) -> TechnicalScoreView:
+    extrema = json.loads(cast(str, row[18]))
+    return TechnicalScoreView(
+        version=cast(str, row[0]),
+        actual_data_date=date.fromisoformat(cast(str, row[1])),
+        code=cast(str, row[2]),
+        name=cast(str, row[3]),
+        board=cast(Board, row[4]),
+        ema3=float(str(row[5])),
+        derivative=float(str(row[6])),
+        derivative_state=cast(DerivativeState, row[7]),
+        zero_threshold=float(str(row[8])),
+        atr10=float(str(row[9])),
+        structure_state=cast(StructureState, row[10]),
+        structure_valid=bool(row[11]),
+        active_breakout=bool(row[12]),
+        structure_score=float(str(row[13])),
+        breakout_score=float(str(row[14])),
+        relative_strength_score=float(str(row[15])),
+        turnover_score=float(str(row[16])),
+        total_score=float(str(row[17])),
+        maxima=[
+            ExtremumView.model_validate(item)
+            for item in extrema.get("maxima", [])
+        ],
+        minima=[
+            ExtremumView.model_validate(item)
+            for item in extrema.get("minima", [])
+        ],
+        evidence=cast(
+            dict[str, object], json.loads(cast(str, row[19]))
+        ),
+    )

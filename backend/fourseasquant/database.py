@@ -76,6 +76,17 @@ class HistoricalMarketSummaryRow:
     unchanged: int
 
 
+@dataclass(frozen=True)
+class TechnicalScorePublicationRow:
+    version: str
+    official_start: date
+    official_end: date
+    qfq_source: str
+    symbol_count: int
+    score_count: int
+    published_at: datetime
+
+
 def database_path() -> Path:
     configured_path = os.environ.get("FOURSEASQUANT_DB_PATH")
     if configured_path:
@@ -253,6 +264,150 @@ def initialize_database(path: Path) -> None:
             )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS technical_score_versions (
+                version TEXT PRIMARY KEY,
+                parameters_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS technical_daily_scores (
+                version TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                board TEXT NOT NULL,
+                qfq_source TEXT NOT NULL,
+                ema3 REAL NOT NULL,
+                derivative REAL NOT NULL,
+                derivative_state TEXT NOT NULL,
+                zero_threshold REAL NOT NULL,
+                atr10 REAL NOT NULL,
+                structure_state TEXT NOT NULL,
+                structure_valid INTEGER NOT NULL,
+                active_breakout INTEGER NOT NULL,
+                structure_score REAL NOT NULL,
+                breakout_score REAL NOT NULL,
+                relative_strength_score REAL NOT NULL,
+                turnover_score REAL NOT NULL,
+                total_score REAL NOT NULL,
+                extrema_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                PRIMARY KEY (version, qfq_source, actual_data_date, code)
+            )
+            """
+        )
+        technical_score_primary_key = [
+            cast(str, row[1])
+            for row in sorted(
+                connection.execute("PRAGMA table_info(technical_daily_scores)"),
+                key=lambda row: cast(int, row[5]),
+            )
+            if cast(int, row[5]) > 0
+        ]
+        if technical_score_primary_key != [
+            "version",
+            "qfq_source",
+            "actual_data_date",
+            "code",
+        ]:
+            connection.execute(
+                "ALTER TABLE technical_daily_scores RENAME TO technical_daily_scores_v10"
+            )
+            connection.execute(
+                """
+                CREATE TABLE technical_daily_scores (
+                    version TEXT NOT NULL,
+                    actual_data_date TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    board TEXT NOT NULL,
+                    qfq_source TEXT NOT NULL,
+                    ema3 REAL NOT NULL,
+                    derivative REAL NOT NULL,
+                    derivative_state TEXT NOT NULL,
+                    zero_threshold REAL NOT NULL,
+                    atr10 REAL NOT NULL,
+                    structure_state TEXT NOT NULL,
+                    structure_valid INTEGER NOT NULL,
+                    active_breakout INTEGER NOT NULL,
+                    structure_score REAL NOT NULL,
+                    breakout_score REAL NOT NULL,
+                    relative_strength_score REAL NOT NULL,
+                    turnover_score REAL NOT NULL,
+                    total_score REAL NOT NULL,
+                    extrema_json TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    PRIMARY KEY (
+                        version, qfq_source, actual_data_date, code
+                    )
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO technical_daily_scores
+                SELECT * FROM technical_daily_scores_v10
+                """
+            )
+            connection.execute("DROP TABLE technical_daily_scores_v10")
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_technical_daily_scores_date_rank
+            ON technical_daily_scores (
+                version, qfq_source, actual_data_date, total_score DESC, code
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS technical_score_publications (
+                version TEXT NOT NULL,
+                official_start TEXT NOT NULL,
+                official_end TEXT NOT NULL,
+                qfq_source TEXT NOT NULL,
+                symbol_count INTEGER NOT NULL,
+                score_count INTEGER NOT NULL,
+                published_at TEXT NOT NULL,
+                PRIMARY KEY (version, official_start, official_end)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sector_membership_snapshots (
+                membership_version TEXT NOT NULL,
+                effective_date TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                published_at TEXT NOT NULL,
+                PRIMARY KEY (membership_version, effective_date)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sector_leader_election_results (
+                algorithm_version TEXT NOT NULL,
+                membership_version TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                sector_id TEXT NOT NULL,
+                trend_id TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                published_at TEXT NOT NULL,
+                PRIMARY KEY (
+                    algorithm_version,
+                    membership_version,
+                    actual_data_date,
+                    sector_id
+                )
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS automation_claims (
                 target_date TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
@@ -304,7 +459,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '9')
+            VALUES ('schema_version', '11')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -321,7 +476,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("9",)
+    return row == ("11",)
 
 
 def save_historical_market_summary(
@@ -701,6 +856,7 @@ def publish_snapshot(
     payload_json: str,
     published_at: datetime,
     simulate_failure: bool = False,
+    technical_publication: TechnicalScorePublicationRow | None = None,
 ) -> None:
     with sqlite3.connect(path) as connection:
         with connection:
@@ -720,6 +876,30 @@ def publish_snapshot(
             )
             if simulate_failure:
                 raise RuntimeError("模拟事务发布失败")
+            if technical_publication is not None:
+                connection.execute(
+                    """
+                    INSERT INTO technical_score_publications (
+                        version, official_start, official_end, qfq_source,
+                        symbol_count, score_count, published_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(version, official_start, official_end)
+                    DO UPDATE SET
+                        qfq_source = excluded.qfq_source,
+                        symbol_count = excluded.symbol_count,
+                        score_count = excluded.score_count,
+                        published_at = excluded.published_at
+                    """,
+                    (
+                        technical_publication.version,
+                        technical_publication.official_start.isoformat(),
+                        technical_publication.official_end.isoformat(),
+                        technical_publication.qfq_source,
+                        technical_publication.symbol_count,
+                        technical_publication.score_count,
+                        published_at.isoformat(),
+                    ),
+                )
             connection.execute(
                 """
                 UPDATE task_runs

@@ -53,6 +53,7 @@ const INDEXES: InstrumentSelection[] = [
   { instrumentType: "index", code: "sz399001", name: "深证成指" },
   { instrumentType: "index", code: "sh000300", name: "沪深 300" },
   { instrumentType: "index", code: "sz399006", name: "创业板指" },
+  { instrumentType: "index", code: "sh000688", name: "科创 50" },
 ];
 
 const RANGE_COUNTS: Record<RangeKey, number> = {

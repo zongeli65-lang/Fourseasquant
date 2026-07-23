@@ -870,6 +870,234 @@ h2 {
   line-height: 1.6;
 }
 
+.technical-panel {
+  margin-bottom: 18px;
+  padding: 26px;
+  border: 1px solid #314968;
+  border-radius: 14px;
+  background:
+    linear-gradient(145deg, rgba(12, 23, 40, 0.99), rgba(8, 15, 27, 0.99));
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.2);
+}
+
+.technical-panel--message {
+  color: #8394ac;
+  font-size: 12px;
+}
+
+.technical-panel--error {
+  color: #ef7782;
+}
+
+.technical-panel__header,
+.technical-contract-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.technical-panel__header {
+  margin-bottom: 20px;
+}
+
+.technical-panel__header h2 {
+  margin-bottom: 6px;
+  font-size: 21px;
+}
+
+.technical-panel__header p:last-child {
+  margin: 0;
+  color: #71839d;
+  font-size: 10px;
+}
+
+.technical-state-badge {
+  padding: 8px 12px;
+  border: 1px solid rgba(73, 194, 145, 0.48);
+  border-radius: 999px;
+  color: #75d6ad;
+  background: rgba(24, 87, 64, 0.28);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.technical-state-badge--pending {
+  border-color: rgba(220, 174, 88, 0.44);
+  color: #dfb76d;
+  background: rgba(104, 75, 26, 0.24);
+}
+
+.technical-waiting {
+  padding: 26px;
+  border: 1px dashed #344967;
+  border-radius: 11px;
+  background: rgba(17, 29, 48, 0.62);
+}
+
+.technical-waiting strong {
+  color: #c8d5e6;
+  font-size: 14px;
+}
+
+.technical-waiting p {
+  margin: 9px 0 0;
+  color: #71839d;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.technical-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 13px;
+  margin-bottom: 15px;
+}
+
+.technical-summary-grid article {
+  display: grid;
+  min-height: 118px;
+  align-content: space-between;
+  padding: 18px;
+  border: 1px solid #273a55;
+  border-radius: 11px;
+  background: rgba(17, 30, 50, 0.78);
+}
+
+.technical-summary-grid span,
+.technical-summary-grid small {
+  color: #71839d;
+  font-size: 10px;
+}
+
+.technical-summary-grid strong {
+  color: #e2ebf7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.technical-contract-note {
+  margin-bottom: 15px;
+  padding: 15px 17px;
+  border: 1px solid #3b4d66;
+  border-radius: 10px;
+  background: rgba(27, 37, 54, 0.7);
+  color: #7789a2;
+  font-size: 9px;
+}
+
+.technical-contract-note > div {
+  display: grid;
+  gap: 5px;
+}
+
+.technical-contract-note strong {
+  color: #d5b774;
+  font-size: 11px;
+}
+
+.technical-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #24354e;
+  border-radius: 11px;
+}
+
+.technical-panel table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #9aacc2;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.technical-panel th,
+.technical-panel td {
+  height: 46px;
+  padding: 0 13px;
+  border-bottom: 1px solid #1d2c42;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.technical-panel th:first-child,
+.technical-panel td:first-child,
+.technical-panel th:last-child,
+.technical-panel td:last-child {
+  text-align: left;
+}
+
+.technical-panel tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.technical-panel td > button {
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.technical-panel td > button strong {
+  color: #c9d6e6;
+  font-size: 10px;
+}
+
+.technical-panel td > button span {
+  color: #5c7090;
+  font-size: 8px;
+}
+
+.technical-panel td > button:hover strong {
+  color: #75b5ff;
+}
+
+.technical-total {
+  color: #f0c36e;
+  font-size: 13px;
+}
+
+.technical-evidence {
+  display: flex;
+  gap: 5px;
+}
+
+.technical-evidence span {
+  padding: 3px 6px;
+  border: 1px solid #344761;
+  border-radius: 999px;
+  color: #9baec6;
+  background: #15243a;
+  font-size: 8px;
+}
+
+.technical-evidence .technical-evidence--valid {
+  border-color: rgba(75, 199, 150, 0.42);
+  color: #76d6ad;
+}
+
+.technical-evidence .technical-evidence--breakout {
+  border-color: rgba(230, 86, 98, 0.45);
+  color: #ef6c78;
+}
+
+.technical-empty {
+  height: 90px !important;
+  color: #71839d;
+  text-align: center !important;
+}
+
+.technical-footnote {
+  margin: 12px 0 0;
+  color: #596c86;
+  font-size: 9px;
+  line-height: 1.65;
+}
+
 .kline-explorer {
   margin-bottom: 18px;
   padding: 24px;

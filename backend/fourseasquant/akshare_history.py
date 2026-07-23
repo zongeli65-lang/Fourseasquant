@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import sleep
+from typing import Literal, cast
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -33,6 +34,7 @@ StockHistoryFactory = Callable[[str, date, date], pd.DataFrame]
 ProgressCallback = Callable[[int, int, str, bool], None]
 HISTORY_SOURCE = "akshare_sina_daily"
 HISTORY_QFQ_SOURCE = "akshare_sina_daily_qfq"
+Board = Literal["main", "chinext", "star"]
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class SecurityListing:
     symbol: str
     name: str
     listing_date: date
+    board: Board = "main"
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,8 @@ class AkshareOneYearHistoryImporter:
         sz_listing: FrameFactory,
         index_history: FrameFactory,
         stock_history: StockHistoryFactory,
+        star_listing: FrameFactory | None = None,
+        include_technical_boards: bool = False,
         history_source: str = HISTORY_SOURCE,
         publish_market_days: bool = True,
         max_workers: int = 2,
@@ -75,6 +80,8 @@ class AkshareOneYearHistoryImporter:
         self._sz_listing = sz_listing
         self._index_history = index_history
         self._stock_history = stock_history
+        self._star_listing = star_listing
+        self._include_technical_boards = include_technical_boards
         self._history_source = history_source
         self._publish_market_days = publish_market_days
         self._max_workers = max(1, max_workers)
@@ -87,19 +94,31 @@ class AkshareOneYearHistoryImporter:
         path: Path,
         requested_end_date: date,
         new_stock_exclusion_days: int,
+        warmup_trading_days: int = 0,
         collected_at: datetime | None = None,
     ) -> HistoryImportSummary:
         imported_at = collected_at or datetime.now(ZoneInfo("Asia/Shanghai"))
         benchmark_by_date = self._benchmark_rows(requested_end_date)
         range_end = max(benchmark_by_date)
-        range_start = _one_year_start(range_end)
+        official_start = _one_year_start(range_end)
+        available_dates = sorted(benchmark_by_date)
+        official_index = next(
+            (
+                index
+                for index, trading_date in enumerate(available_dates)
+                if trading_date >= official_start
+            ),
+            0,
+        )
+        warmup_index = max(0, official_index - max(0, warmup_trading_days))
+        range_start = available_dates[warmup_index]
         trading_dates = sorted(
             trading_date
             for trading_date in benchmark_by_date
-            if range_start <= trading_date <= range_end
+            if official_start <= trading_date <= range_end
         )
         all_trading_dates = sorted(benchmark_by_date)
-        listings = self._main_board_listings(range_end)
+        listings = self._eligible_listings(range_end)
         completed = completed_history_symbols(
             path,
             source=self._history_source,
@@ -224,7 +243,7 @@ class AkshareOneYearHistoryImporter:
             raise HistoryDataQualityError("沪深 300 没有可用历史交易日")
         return rows
 
-    def _main_board_listings(self, range_end: date) -> list[SecurityListing]:
+    def _eligible_listings(self, range_end: date) -> list[SecurityListing]:
         listings: list[SecurityListing] = []
         for row in self._sh_listing().to_dict("records"):
             code = _normalise_code(row.get("证券代码"))
@@ -237,11 +256,11 @@ class AkshareOneYearHistoryImporter:
                 and not _is_excluded_name(name)
             ):
                 listings.append(
-                    SecurityListing(code, f"sh{code}", name, listing_date)
+                    SecurityListing(code, f"sh{code}", name, listing_date, "main")
                 )
 
         sz_listing = self._sz_listing()
-        if "板块" in sz_listing.columns:
+        if "板块" in sz_listing.columns and not self._include_technical_boards:
             sz_listing = sz_listing[sz_listing["板块"] == "主板"]
         for row in sz_listing.to_dict("records"):
             code = _normalise_code(row.get("A股代码"))
@@ -253,9 +272,30 @@ class AkshareOneYearHistoryImporter:
                 and listing_date <= range_end
                 and not _is_excluded_name(name)
             ):
+                board = _board_for_code(code)
+                if board == "star":
+                    continue
+                if board == "chinext" and not self._include_technical_boards:
+                    continue
                 listings.append(
-                    SecurityListing(code, f"sz{code}", name, listing_date)
+                    SecurityListing(code, f"sz{code}", name, listing_date, board)
                 )
+        if self._include_technical_boards and self._star_listing is not None:
+            for row in self._star_listing().to_dict("records"):
+                code = _normalise_code(row.get("证券代码"))
+                name = str(row.get("证券简称", "")).strip()
+                listing_date = _date_value(row.get("上市日期"))
+                if (
+                    code
+                    and listing_date is not None
+                    and listing_date <= range_end
+                    and not _is_excluded_name(name)
+                ):
+                    listings.append(
+                        SecurityListing(
+                            code, f"sh{code}", name, listing_date, "star"
+                        )
+                    )
         return sorted(listings, key=lambda listing: listing.code)
 
     def _load_symbol_facts(
@@ -425,17 +465,18 @@ def build_akshare_one_year_history_importer(
     *,
     max_workers: int = 2,
     progress_callback: ProgressCallback | None = None,
+    include_technical_boards: bool = False,
 ) -> AkshareOneYearHistoryImporter:
     import akshare as ak  # type: ignore[import-untyped]
 
     return AkshareOneYearHistoryImporter(
         sh_listing=lambda: ak.stock_info_sh_name_code(symbol="主板A股"),
         sz_listing=lambda: ak.stock_info_sz_name_code(symbol="A股列表"),
+        star_listing=lambda: ak.stock_info_sh_name_code(symbol="科创板"),
+        include_technical_boards=include_technical_boards,
         index_history=lambda: ak.stock_zh_index_daily(symbol="sh000300"),
-        stock_history=lambda symbol, start, end: ak.stock_zh_a_daily(
-            symbol=symbol,
-            start_date=start.strftime("%Y%m%d"),
-            end_date=end.strftime("%Y%m%d"),
+        stock_history=lambda symbol, start, end: _akshare_stock_history(
+            ak, symbol, start, end, adjust=""
         ),
         max_workers=max_workers,
         progress_callback=progress_callback,
@@ -447,18 +488,18 @@ def build_akshare_qfq_history_importer(
     max_workers: int = 2,
     progress_callback: ProgressCallback | None = None,
     version_tag: str | None = None,
+    include_technical_boards: bool = False,
 ) -> AkshareOneYearHistoryImporter:
     import akshare as ak
 
     return AkshareOneYearHistoryImporter(
         sh_listing=lambda: ak.stock_info_sh_name_code(symbol="主板A股"),
         sz_listing=lambda: ak.stock_info_sz_name_code(symbol="A股列表"),
+        star_listing=lambda: ak.stock_info_sh_name_code(symbol="科创板"),
+        include_technical_boards=include_technical_boards,
         index_history=lambda: ak.stock_zh_index_daily(symbol="sh000300"),
-        stock_history=lambda symbol, start, end: ak.stock_zh_a_daily(
-            symbol=symbol,
-            start_date=start.strftime("%Y%m%d"),
-            end_date=end.strftime("%Y%m%d"),
-            adjust="qfq",
+        stock_history=lambda symbol, start, end: _akshare_stock_history(
+            ak, symbol, start, end, adjust="qfq"
         ),
         history_source=(
             f"{HISTORY_QFQ_SOURCE}:{version_tag}"
@@ -505,3 +546,58 @@ def _integer(value: object) -> int:
 
 def _is_excluded_name(name: str) -> bool:
     return "ST" in name.upper() or "退" in name
+
+
+def _akshare_stock_history(
+    ak: object,
+    symbol: str,
+    start: date,
+    end: date,
+    *,
+    adjust: str,
+) -> pd.DataFrame:
+    if not symbol.startswith("sh689"):
+        return ak.stock_zh_a_daily(  # type: ignore[attr-defined,no-any-return]
+            symbol=symbol,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            adjust=adjust,
+        )
+    cdr = cast(
+        pd.DataFrame,
+        ak.stock_zh_a_cdr_daily(  # type: ignore[attr-defined]
+            symbol=symbol,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+        ),
+    )
+    if adjust == "":
+        frame = cdr
+    else:
+        adjusted = cast(
+            pd.DataFrame,
+            ak.stock_zh_a_hist_tx(  # type: ignore[attr-defined]
+                symbol=symbol,
+                start_date=start.strftime("%Y%m%d"),
+                end_date=end.strftime("%Y%m%d"),
+                adjust=adjust,
+                timeout=15,
+            ),
+        ).drop(columns=["amount"], errors="ignore")
+        frame = adjusted.merge(
+            cdr[["date", "volume", "amount"]],
+            on="date",
+            how="inner",
+            validate="one_to_one",
+        )
+    return frame[
+        ["date", "open", "high", "low", "close", "volume", "amount"]
+    ]
+
+
+def _board_for_code(code: str) -> Board:
+    if code.startswith(("300", "301")):
+        return "chinext"
+    if code.startswith(("688", "689")):
+        return "star"
+    return "main"

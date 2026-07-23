@@ -7,7 +7,10 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from fourseasquant.akshare_history import AkshareOneYearHistoryImporter
+from fourseasquant.akshare_history import (
+    AkshareOneYearHistoryImporter,
+    _akshare_stock_history,
+)
 from fourseasquant.database import (
     completed_history_symbols,
     initialize_database,
@@ -172,3 +175,128 @@ def test_one_year_import_resumes_completed_symbols_before_publishing(
         range_start=date(2025, 7, 22),
         range_end=date(2026, 7, 21),
     ) == {"000001", "600000"}
+
+
+def test_technical_universe_includes_chinext_and_star_with_warmup(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "technical-universe.db"
+    initialize_database(database)
+    calls: list[str] = []
+
+    def stock_history(symbol: str, start: date, end: date) -> pd.DataFrame:
+        del start, end
+        calls.append(symbol)
+        return _history()
+
+    importer = AkshareOneYearHistoryImporter(
+        sh_listing=lambda: pd.DataFrame(
+            [
+                {
+                    "证券代码": "600000",
+                    "证券简称": "主板样本",
+                    "上市日期": date(2000, 1, 1),
+                }
+            ]
+        ),
+        sz_listing=lambda: pd.DataFrame(
+            [
+                {
+                    "板块": "主板",
+                    "A股代码": "000001",
+                    "A股简称": "深市主板",
+                    "A股上市日期": date(2000, 1, 1),
+                },
+                {
+                    "板块": "创业板",
+                    "A股代码": "300001",
+                    "A股简称": "创业样本",
+                    "A股上市日期": date(2010, 1, 1),
+                },
+            ]
+        ),
+        star_listing=lambda: pd.DataFrame(
+            [
+                {
+                    "证券代码": "688001",
+                    "证券简称": "科创样本",
+                    "上市日期": date(2020, 1, 1),
+                }
+            ]
+        ),
+        include_technical_boards=True,
+        index_history=_index_history,
+        stock_history=stock_history,
+        publish_market_days=False,
+        max_workers=2,
+    )
+
+    summary = importer.import_one_year(
+        path=database,
+        requested_end_date=date(2026, 7, 22),
+        new_stock_exclusion_days=60,
+        warmup_trading_days=60,
+    )
+
+    assert summary.range_start < date(2025, 7, 22)
+    assert summary.total_symbols == 4
+    assert set(calls) == {
+        "sh600000",
+        "sz000001",
+        "sz300001",
+        "sh688001",
+    }
+
+
+def test_cdr_history_combines_adjusted_prices_with_exact_volume_and_amount() -> None:
+    trading_date = date(2026, 7, 23)
+
+    class FakeAkshare:
+        def stock_zh_a_cdr_daily(self, **_: object) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    {
+                        "date": trading_date,
+                        "open": 37.75,
+                        "high": 39.67,
+                        "low": 36.88,
+                        "close": 39.25,
+                        "volume": 12_810_589,
+                        "amount": 493_917_344,
+                    }
+                ]
+            )
+
+        def stock_zh_a_hist_tx(self, **_: object) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    {
+                        "date": trading_date,
+                        "open": 36.75,
+                        "high": 38.67,
+                        "low": 35.88,
+                        "close": 38.25,
+                        "amount": 12_810_589,
+                    }
+                ]
+            )
+
+    frame = _akshare_stock_history(
+        FakeAkshare(),
+        "sh689009",
+        trading_date,
+        trading_date,
+        adjust="qfq",
+    )
+
+    assert frame.to_dict("records") == [
+        {
+            "date": trading_date,
+            "open": 36.75,
+            "high": 38.67,
+            "low": 35.88,
+            "close": 38.25,
+            "volume": 12_810_589,
+            "amount": 493_917_344,
+        }
+    ]

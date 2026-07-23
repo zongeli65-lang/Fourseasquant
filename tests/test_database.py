@@ -7,11 +7,14 @@ from zoneinfo import ZoneInfo
 
 from fourseasquant.database import (
     HistoricalSecurityFactRow,
+    TechnicalScorePublicationRow,
     claim_automation_date,
     completed_history_symbols,
+    create_task_run,
     historical_security_facts_for_date,
     initialize_database,
     latest_market_facts,
+    publish_snapshot,
     release_automation_date,
     save_history_symbol_batch,
     save_market_facts,
@@ -59,7 +62,7 @@ def test_version_one_task_history_is_migrated_with_meaningful_stages(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
         stage = connection.execute("SELECT stage FROM task_runs").fetchone()
-    assert version == ("9",)
+    assert version == ("11",)
     assert stage == ("completed",)
 
 
@@ -91,7 +94,7 @@ def test_version_two_automation_claims_gain_owned_claim_ids(tmp_path: Path) -> N
         claim = connection.execute(
             "SELECT target_date, claim_id FROM automation_claims"
         ).fetchone()
-    assert version == ("9",)
+    assert version == ("11",)
     assert claim is not None
     assert claim[0] == "2026-07-21"
     assert claim[1]
@@ -121,6 +124,65 @@ def test_stale_owner_cannot_release_newer_automation_claim(tmp_path: Path) -> No
     assert third_claim is None
 
     release_automation_date(database, target, second_claim)
+
+
+def test_snapshot_and_technical_publication_activate_atomically(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "atomic-publication.db"
+    initialize_database(database)
+    target = date(2026, 7, 21)
+    published_at = datetime(
+        2026, 7, 21, 16, 31, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
+    task_id = create_task_run(database, target, published_at)
+    publication = TechnicalScorePublicationRow(
+        version="technical-v1",
+        official_start=date(2025, 7, 22),
+        official_end=target,
+        qfq_source="akshare_sina_daily_qfq:2026-07-21",
+        symbol_count=4_900,
+        score_count=1_000_000,
+        published_at=published_at,
+    )
+
+    try:
+        publish_snapshot(
+            database,
+            task_id=task_id,
+            target_date=target,
+            payload_json='{"status":"complete"}',
+            published_at=published_at,
+            simulate_failure=True,
+            technical_publication=publication,
+        )
+    except RuntimeError:
+        pass
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM daily_snapshots"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM technical_score_publications"
+        ).fetchone() == (0,)
+
+    publish_snapshot(
+        database,
+        task_id=task_id,
+        target_date=target,
+        payload_json='{"status":"complete"}',
+        published_at=published_at,
+        technical_publication=publication,
+    )
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM daily_snapshots"
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT qfq_source FROM technical_score_publications"
+        ).fetchone() == (publication.qfq_source,)
 
 
 def test_market_facts_keep_changed_revisions_without_duplicating_same_content(

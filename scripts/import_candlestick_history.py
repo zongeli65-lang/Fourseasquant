@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -39,10 +39,12 @@ def main() -> int:
     raw = build_akshare_one_year_history_importer(
         max_workers=2,
         progress_callback=report_progress,
+        include_technical_boards=True,
     ).import_one_year(
         path=path,
         requested_end_date=requested_end_date,
         new_stock_exclusion_days=settings.new_stock_exclusion_days,
+        warmup_trading_days=60,
     )
     if raw.failed_codes:
         print(json.dumps({"stage": "raw", "failed_codes": raw.failed_codes}))
@@ -51,10 +53,12 @@ def main() -> int:
         max_workers=2,
         progress_callback=report_progress,
         version_tag=requested_end_date.isoformat(),
+        include_technical_boards=True,
     ).import_one_year(
         path=path,
         requested_end_date=requested_end_date,
         new_stock_exclusion_days=settings.new_stock_exclusion_days,
+        warmup_trading_days=60,
     )
     if adjusted.failed_codes:
         print(
@@ -68,8 +72,13 @@ def main() -> int:
         path,
         requested_end_date=requested_end_date,
         index_history=lambda symbol: ak.stock_zh_index_daily(symbol=symbol),
+        warmup_trading_days=60,
     )
-    published_days = publish_complete_candle_dates(path, qfq_source=qfq_source)
+    published_days = publish_complete_candle_dates(
+        path,
+        qfq_source=qfq_source,
+        publication_start=_one_year_start(adjusted.range_end),
+    )
     print(
         json.dumps(
             {
@@ -84,6 +93,14 @@ def main() -> int:
         flush=True,
     )
     return 0
+
+
+def _one_year_start(range_end: date) -> date:
+    try:
+        previous_year = range_end.replace(year=range_end.year - 1)
+    except ValueError:
+        previous_year = range_end.replace(year=range_end.year - 1, day=28)
+    return previous_year + timedelta(days=1)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 
 from fourseasquant.database import (
+    TechnicalScorePublicationRow,
     create_task_run,
     database_path,
     fail_task_run,
@@ -22,10 +23,8 @@ from fourseasquant.database import (
     update_task_stage,
 )
 from fourseasquant.market_overview import MarketOverview
-from fourseasquant.sector_performance import SectorPerformance
 from fourseasquant.simulated_market_data import (
     simulated_market_overview,
-    simulated_sector_performance,
 )
 from fourseasquant.strategy_performance import (
     StrategyPerformance,
@@ -75,6 +74,7 @@ class PreparedMarket:
     payload: Mapping[str, object]
     benchmark: str
     adapter: SimulationAdapterProfile
+    technical_publication: TechnicalScorePublicationRow | None = None
 
 
 SIMULATION_ADAPTERS = {
@@ -90,7 +90,6 @@ class MinimalSnapshot(BaseModel):
     label: str
     seed: int
     market_overview: MarketOverview
-    sector_performance: SectorPerformance
     strategy_performance: StrategyPerformance
     portfolio_review: PortfolioReview
 
@@ -152,7 +151,6 @@ def prepare_simulated_market(
                 settings.new_stock_exclusion_days,
                 turnover_scale=adapter.turnover_scale,
             ).model_dump(),
-            "sector_performance": simulated_sector_performance().model_dump(),
         },
         benchmark=settings.benchmark,
         adapter=adapter,
@@ -278,6 +276,7 @@ def execute_daily_task(
             payload_json=payload_json,
             published_at=finished_at,
             simulate_failure=simulate_failure_stage == current_stage,
+            technical_publication=prepared_market.technical_publication,
         )
     except Exception as error:
         failed_at = datetime.now(ZoneInfo("Asia/Shanghai"))

@@ -72,6 +72,13 @@ from fourseasquant.settings import (
     read_settings,
     save_settings,
 )
+from fourseasquant.sector_leadership import membership_json_schema
+from fourseasquant.technical_scoring import (
+    TechnicalScoreStatus,
+    TechnicalScoreView,
+    read_technical_score_status,
+    read_top_technical_scores,
+)
 
 
 APPLICATION_NAME = "Fourseasquant"
@@ -251,6 +258,34 @@ def candle_series(
         )
     except CandleDataNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/technical-scores/status",
+    response_model=TechnicalScoreStatus,
+)
+def technical_score_status() -> TechnicalScoreStatus:
+    return read_technical_score_status(database_path())
+
+
+@app.get(
+    "/api/technical-scores/top",
+    response_model=list[TechnicalScoreView],
+)
+def top_technical_scores(
+    target_date: date,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[TechnicalScoreView]:
+    return read_top_technical_scores(
+        database_path(),
+        requested_date=target_date,
+        limit=limit,
+    )
+
+
+@app.get("/api/contracts/sector-membership")
+def sector_membership_contract() -> dict[str, object]:
+    return membership_json_schema()
 
 
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)
