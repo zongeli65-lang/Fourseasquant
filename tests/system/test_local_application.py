@@ -641,7 +641,7 @@ class LocalApplicationTest(unittest.TestCase):
         )
         self.assertIn("Fourseasquant", page)
         self.assertIn("应用状态", page)
-        self.assertIn('data-theme="dark"', page)
+        self.assertIn('data-theme="light"', page)
 class DevelopmentCommandTest(unittest.TestCase):
     def test_one_command_starts_the_frontend_backend_and_database(self) -> None:
         api_port = available_port()
