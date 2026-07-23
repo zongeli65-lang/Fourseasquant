@@ -70,6 +70,10 @@ uv run python scripts/initialize_technical_scores.py --skip-market-refresh
 
 ## 6. 基本面任务衔接
 
+基本面新任务应先阅读完整的
+[`FUNDAMENTAL_ENGINEERING_HANDOFF.md`](FUNDAMENTAL_ENGINEERING_HANDOFF.md)，
+并在决定数据来源、评分体系和发布流程前使用 `$grill-me` 与用户完成需求访谈。
+
 基本面任务必须发布 `SectorMembershipSnapshot`，字段采用英文，示例位于：
 
 ```text
