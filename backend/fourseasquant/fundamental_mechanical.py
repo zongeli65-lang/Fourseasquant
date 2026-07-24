@@ -51,7 +51,7 @@ class PersonalFundamentalMonthlyInput(BaseModel):
     long_term_interest_bearing_debt: float = Field(ge=0)
     parent_equity: float
     ttm_operating_cash_flow: float
-    ttm_capital_expenditure: float = Field(ge=0)
+    ttm_capital_expenditure: float | None = Field(default=None, ge=0)
     ttm_pretax_profit: float
     ttm_revenue: float
     ttm_cash_dividend: float = Field(ge=0)
@@ -73,7 +73,7 @@ class PersonalFundamentalMonthlyInput(BaseModel):
         ge=0,
         le=1,
     )
-    shareholder_actions: ShareholderActions
+    shareholder_actions: ShareholderActions | None = None
     floating_market_cap_universe: list[float]
 
 
@@ -100,7 +100,7 @@ class PersonalFundamentalMonthlySnapshot(BaseModel):
     dividend_payout_ratio: float | None
     consecutive_dividend_years: int
     dividend_continuously_increased: bool | None
-    free_cash_flow_per_share: float
+    free_cash_flow_per_share: float | None
     price_to_free_cash_flow: float | None
     inventory_status: InventoryStatus
     inventory_growth: float | None
@@ -113,8 +113,8 @@ class PersonalFundamentalMonthlySnapshot(BaseModel):
     main_business_profit_share: float | None
     institution_holding_ratio: float | None
     institution_holding_change: float | None
-    capital_action_signal: CapitalActionSignal
-    true_money_signal_score: float
+    capital_action_signal: CapitalActionSignal | None
+    true_money_signal_score: float | None
     floating_market_cap: float
     floating_market_cap_percentile: float | None
 
@@ -178,6 +178,8 @@ def calculate_personal_fundamental_monthly_snapshot(
     )
     free_cash_flow = (
         source.ttm_operating_cash_flow - source.ttm_capital_expenditure
+        if source.ttm_capital_expenditure is not None
+        else None
     )
     main_business_name, main_business_profit_share = _main_business(
         source.business_segments
@@ -193,7 +195,11 @@ def calculate_personal_fundamental_monthly_snapshot(
         source.ttm_pretax_profit,
         source.ttm_revenue,
     )
-    capital_action_signal = _capital_action_signal(source.shareholder_actions)
+    capital_action_signal = (
+        _capital_action_signal(source.shareholder_actions)
+        if source.shareholder_actions is not None
+        else None
+    )
 
     return PersonalFundamentalMonthlySnapshot(
         rules_version=RULES_VERSION,
@@ -231,10 +237,15 @@ def calculate_personal_fundamental_monthly_snapshot(
         dividend_continuously_increased=_dividend_continuously_increased(
             source.annual_cash_dividends
         ),
-        free_cash_flow_per_share=free_cash_flow / source.total_shares,
-        price_to_free_cash_flow=_ratio_when_denominator_positive(
-            market_cap,
-            free_cash_flow,
+        free_cash_flow_per_share=(
+            free_cash_flow / source.total_shares
+            if free_cash_flow is not None
+            else None
+        ),
+        price_to_free_cash_flow=(
+            _ratio_when_denominator_positive(market_cap, free_cash_flow)
+            if free_cash_flow is not None
+            else None
         ),
         inventory_status=inventory_status,
         inventory_growth=inventory_growth,
@@ -258,8 +269,10 @@ def calculate_personal_fundamental_monthly_snapshot(
         institution_holding_ratio=source.institution_holding_ratio,
         institution_holding_change=institution_holding_change,
         capital_action_signal=capital_action_signal,
-        true_money_signal_score=capital_action_signal_score(
-            capital_action_signal
+        true_money_signal_score=(
+            capital_action_signal_score(capital_action_signal)
+            if capital_action_signal is not None
+            else None
         ),
         floating_market_cap=floating_market_cap,
         floating_market_cap_percentile=_positive_percentile(

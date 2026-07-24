@@ -55,7 +55,7 @@ type MonthlySnapshot = {
   dividend_payout_ratio: number | null;
   consecutive_dividend_years: number;
   dividend_continuously_increased: boolean | null;
-  free_cash_flow_per_share: number;
+  free_cash_flow_per_share: number | null;
   price_to_free_cash_flow: number | null;
   inventory_status: "available" | "insufficient_data" | "not_applicable";
   inventory_growth: number | null;
@@ -68,8 +68,8 @@ type MonthlySnapshot = {
   main_business_profit_share: number | null;
   institution_holding_ratio: number | null;
   institution_holding_change: number | null;
-  capital_action_signal: CapitalActionSignal;
-  true_money_signal_score: number;
+  capital_action_signal: CapitalActionSignal | null;
+  true_money_signal_score: number | null;
   floating_market_cap: number;
   floating_market_cap_percentile: number | null;
 };
@@ -491,14 +491,20 @@ function FundamentalDetail({
               </article>
               <article>
                 <h4>资本行为原始证据</h4>
-                <dl>
-                  <div><dt>内部人士净买入</dt><dd>{compactNumber(latest.capital_action_signal.insider_net_purchase_amount, "元")}</dd></div>
-                  <div><dt>内部人士调整</dt><dd>{decimal(latest.capital_action_signal.insider_adjustment, 1)}</dd></div>
-                  <div><dt>注销式回购</dt><dd>{compactNumber(latest.capital_action_signal.cancelled_buyback_amount, "元")}</dd></div>
-                  <div><dt>回购奖励</dt><dd>{decimal(latest.capital_action_signal.buyback_bonus, 1)}</dd></div>
-                  <div><dt>股本稀释比例</dt><dd>{ratio(latest.capital_action_signal.dilution_ratio)}</dd></div>
-                  <div><dt>稀释扣分</dt><dd>{decimal(latest.capital_action_signal.dilution_penalty, 1)}</dd></div>
-                </dl>
+                {latest.capital_action_signal ? (
+                  <dl>
+                    <div><dt>内部人士净买入</dt><dd>{compactNumber(latest.capital_action_signal.insider_net_purchase_amount, "元")}</dd></div>
+                    <div><dt>内部人士调整</dt><dd>{decimal(latest.capital_action_signal.insider_adjustment, 1)}</dd></div>
+                    <div><dt>注销式回购</dt><dd>{compactNumber(latest.capital_action_signal.cancelled_buyback_amount, "元")}</dd></div>
+                    <div><dt>回购奖励</dt><dd>{decimal(latest.capital_action_signal.buyback_bonus, 1)}</dd></div>
+                    <div><dt>股本稀释比例</dt><dd>{ratio(latest.capital_action_signal.dilution_ratio)}</dd></div>
+                    <div><dt>稀释扣分</dt><dd>{decimal(latest.capital_action_signal.dilution_penalty, 1)}</dd></div>
+                  </dl>
+                ) : (
+                  <p className="fundamental-inline-empty">
+                    尚无经过验证的内部人、注销回购与稀释数据。
+                  </p>
+                )}
               </article>
             </div>
           </section>
