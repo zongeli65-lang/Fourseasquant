@@ -15,9 +15,11 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "backend"))
 
 from fourseasquant.database import database_path, initialize_database  # noqa: E402
 from fourseasquant.fundamental_discovery import (  # noqa: E402
-    collect_eastmoney_board_snapshot,
+    collect_eastmoney_board_candidate_snapshot,
 )
-from fourseasquant.fundamental_repository import save_board_snapshot  # noqa: E402
+from fourseasquant.fundamental_repository import (  # noqa: E402
+    save_board_candidate_snapshot,
+)
 
 
 def main() -> int:
@@ -40,7 +42,7 @@ def main() -> int:
             ak.stock_board_concept_cons_em(symbol=board_code),
         )
 
-    snapshot = collect_eastmoney_board_snapshot(
+    snapshot = collect_eastmoney_board_candidate_snapshot(
         industry_catalog=industry_catalog,
         concept_catalog=concept_catalog,
         constituent_fetcher=fetch_constituents,
@@ -50,7 +52,7 @@ def main() -> int:
     if not snapshot.complete:
         print(snapshot.model_dump_json(indent=2), flush=True)
         return 1
-    saved = save_board_snapshot(
+    saved = save_board_candidate_snapshot(
         path,
         snapshot,
         collected_at=datetime.now(ZoneInfo("Asia/Shanghai")),

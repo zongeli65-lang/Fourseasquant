@@ -8,11 +8,11 @@ import pandas as pd
 
 from fourseasquant.database import initialize_database
 from fourseasquant.fundamental_discovery import (
-    collect_eastmoney_board_snapshot,
+    collect_eastmoney_board_candidate_snapshot,
 )
 from fourseasquant.fundamental_repository import (
-    read_latest_board_snapshot,
-    save_board_snapshot,
+    read_latest_board_candidate_snapshot,
+    save_board_candidate_snapshot,
 )
 
 
@@ -38,7 +38,7 @@ def test_eastmoney_industry_and_concept_boards_keep_their_memberships() -> None:
         ),
     }
 
-    snapshot = collect_eastmoney_board_snapshot(
+    snapshot = collect_eastmoney_board_candidate_snapshot(
         industry_catalog=industry_catalog,
         concept_catalog=concept_catalog,
         constituent_fetcher=lambda board_code: constituents[board_code],
@@ -64,7 +64,7 @@ def test_failed_board_fetch_makes_snapshot_incomplete_without_fake_members() -> 
     def fail(_: str) -> pd.DataFrame:
         raise RuntimeError("上游不可用")
 
-    snapshot = collect_eastmoney_board_snapshot(
+    snapshot = collect_eastmoney_board_candidate_snapshot(
         industry_catalog=industry_catalog,
         concept_catalog=pd.DataFrame(columns=["板块名称", "板块代码"]),
         constituent_fetcher=fail,
@@ -76,12 +76,12 @@ def test_failed_board_fetch_makes_snapshot_incomplete_without_fake_members() -> 
     assert snapshot.errors == ["BK0475: 上游不可用"]
 
 
-def test_complete_board_snapshot_is_content_deduplicated(
+def test_complete_board_candidate_snapshot_is_content_deduplicated(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "boards.db"
     initialize_database(database)
-    snapshot = collect_eastmoney_board_snapshot(
+    snapshot = collect_eastmoney_board_candidate_snapshot(
         industry_catalog=pd.DataFrame(
             [{"板块名称": "银行", "板块代码": "BK0475"}]
         ),
@@ -99,8 +99,12 @@ def test_complete_board_snapshot_is_content_deduplicated(
         tzinfo=ZoneInfo("Asia/Shanghai"),
     )
 
-    first = save_board_snapshot(database, snapshot, collected_at=collected_at)
-    duplicate = save_board_snapshot(
+    first = save_board_candidate_snapshot(
+        database,
+        snapshot,
+        collected_at=collected_at,
+    )
+    duplicate = save_board_candidate_snapshot(
         database,
         snapshot,
         collected_at=collected_at,
@@ -108,4 +112,4 @@ def test_complete_board_snapshot_is_content_deduplicated(
 
     assert first.inserted is True
     assert duplicate.inserted is False
-    assert read_latest_board_snapshot(database, "eastmoney") == snapshot
+    assert read_latest_board_candidate_snapshot(database, "eastmoney") == snapshot

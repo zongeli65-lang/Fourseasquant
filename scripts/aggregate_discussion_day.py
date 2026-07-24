@@ -13,10 +13,16 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "backend"))
 
 from fourseasquant.database import database_path, initialize_database  # noqa: E402
 from fourseasquant.discussion_sentiment import (  # noqa: E402
+    DiscussionPlatform,
     DiscussionPost,
     aggregate_platform_discussion,
+    combine_platform_aggregates,
 )
-from fourseasquant.fundamental_repository import save_discussion_day  # noqa: E402
+from fourseasquant.fundamental_repository import (  # noqa: E402
+    read_platform_discussion_aggregate,
+    save_combined_discussion_signal,
+    save_discussion_day,
+)
 
 
 def main() -> int:
@@ -42,7 +48,40 @@ def main() -> int:
         aggregate=aggregate,
         created_at=datetime.now(ZoneInfo("Asia/Shanghai")),
     )
-    print(aggregate.model_dump_json(), flush=True)
+    other_platform: DiscussionPlatform = (
+        "xueqiu"
+        if aggregate.platform == "eastmoney_guba"
+        else "eastmoney_guba"
+    )
+    other = read_platform_discussion_aggregate(
+        path,
+        platform=other_platform,
+        actual_date=aggregate.actual_date,
+        code=aggregate.code,
+    )
+    eastmoney = aggregate if aggregate.platform == "eastmoney_guba" else other
+    xueqiu = aggregate if aggregate.platform == "xueqiu" else other
+    combined = combine_platform_aggregates(eastmoney, xueqiu)
+    if combined is not None:
+        save_combined_discussion_signal(
+            path,
+            combined,
+            created_at=datetime.now(ZoneInfo("Asia/Shanghai")),
+        )
+    print(
+        json.dumps(
+            {
+                "platform": aggregate.model_dump(mode="json"),
+                "combined": (
+                    combined.model_dump(mode="json")
+                    if combined is not None
+                    else None
+                ),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     return 0
 
 

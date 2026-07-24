@@ -7,15 +7,15 @@ import pytest
 from fourseasquant.fundamental_mechanical import (
     AnnualEarnings,
     BusinessSegment,
-    MonthlyFundamentalInput,
+    PersonalFundamentalMonthlyInput,
     ShareholderActions,
-    calculate_monthly_snapshot,
+    calculate_personal_fundamental_monthly_snapshot,
 )
 
 
-def test_monthly_snapshot_calculates_the_confirmed_four_pillars() -> None:
-    snapshot = calculate_monthly_snapshot(
-        MonthlyFundamentalInput(
+def test_personal_fundamental_monthly_snapshot_calculates_four_pillars() -> None:
+    snapshot = calculate_personal_fundamental_monthly_snapshot(
+        PersonalFundamentalMonthlyInput(
             code="600000",
             as_of_date=date(2026, 6, 30),
             price=20.0,
@@ -46,9 +46,21 @@ def test_monthly_snapshot_calculates_the_confirmed_four_pillars() -> None:
             annual_cash_dividends=[10, 12, 15, 18, 20],
             historical_adjusted_pe=[8.0, 9.0, 11.0, 12.0],
             peer_adjusted_pe=[7.0, 10.0, 13.0],
+            historical_pretax_margins=[0.08, 0.10, 0.12],
+            peer_pretax_margins=[0.09, 150 / 1_300, 0.15],
             business_segments=[
-                BusinessSegment(name="业务甲", revenue=600, cost=300),
-                BusinessSegment(name="业务乙", revenue=800, cost=600),
+                BusinessSegment(
+                    name="业务甲",
+                    revenue=600,
+                    cost=300,
+                    disclosed_profit=50,
+                ),
+                BusinessSegment(
+                    name="业务乙",
+                    revenue=800,
+                    cost=600,
+                    disclosed_profit=80,
+                ),
             ],
             institution_holding_ratio=0.12,
             prior_institution_holding_ratio=0.10,
@@ -81,21 +93,30 @@ def test_monthly_snapshot_calculates_the_confirmed_four_pillars() -> None:
     assert snapshot.short_term_debt_share == pytest.approx(0.50)
     assert snapshot.dividend_payout_ratio == pytest.approx(0.16)
     assert snapshot.consecutive_dividend_years == 5
+    assert snapshot.dividend_continuously_increased is True
     assert snapshot.free_cash_flow_per_share == pytest.approx(2)
     assert snapshot.price_to_free_cash_flow == pytest.approx(10)
     assert snapshot.inventory_growth_minus_revenue_growth == pytest.approx(-0.10)
     assert snapshot.pretax_margin == pytest.approx(150 / 1_300)
-    assert snapshot.main_business_name == "业务甲"
-    assert snapshot.main_business_profit_share == pytest.approx(0.60)
+    assert snapshot.pretax_margin_historical_percentile == pytest.approx(200 / 3)
+    assert snapshot.pretax_margin_peer_percentile == pytest.approx(200 / 3)
+    assert snapshot.main_business_name == "业务乙"
+    assert snapshot.main_business_profit_share == pytest.approx(80 / 130)
     assert snapshot.institution_holding_change == pytest.approx(0.02)
     assert snapshot.true_money_signal_score == pytest.approx(80)
+    assert snapshot.capital_action_signal.insider_net_purchase_amount == 3_000_000
+    assert snapshot.capital_action_signal.insider_adjustment == pytest.approx(30)
+    assert snapshot.capital_action_signal.cancelled_buyback_amount == 10_000_000
+    assert snapshot.capital_action_signal.buyback_bonus == pytest.approx(20)
+    assert snapshot.capital_action_signal.dilution_ratio == pytest.approx(0.10)
+    assert snapshot.capital_action_signal.dilution_penalty == pytest.approx(20)
     assert snapshot.floating_market_cap == pytest.approx(1_000_000_000)
     assert snapshot.floating_market_cap_percentile == pytest.approx(200 / 3)
 
 
 def test_non_positive_earnings_do_not_produce_misleading_valuation_ratios() -> None:
-    snapshot = calculate_monthly_snapshot(
-        MonthlyFundamentalInput(
+    snapshot = calculate_personal_fundamental_monthly_snapshot(
+        PersonalFundamentalMonthlyInput(
             code="600001",
             as_of_date=date(2026, 6, 30),
             price=10,
@@ -134,7 +155,7 @@ def test_non_positive_earnings_do_not_produce_misleading_valuation_ratios() -> N
 
 
 def test_five_year_growth_ignores_older_earnings_history() -> None:
-    source = MonthlyFundamentalInput(
+    source = PersonalFundamentalMonthlyInput(
         code="600002",
         as_of_date=date(2026, 6, 30),
         price=10,
@@ -166,7 +187,7 @@ def test_five_year_growth_ignores_older_earnings_history() -> None:
         floating_market_cap_universe=[500],
     )
 
-    snapshot = calculate_monthly_snapshot(source)
+    snapshot = calculate_personal_fundamental_monthly_snapshot(source)
 
     assert snapshot.five_year_adjusted_eps_cagr == pytest.approx(0.20)
     assert snapshot.positive_growth_years == 4

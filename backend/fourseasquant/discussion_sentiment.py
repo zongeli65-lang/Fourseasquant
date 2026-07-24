@@ -44,6 +44,7 @@ class DiscussionPost(BaseModel):
     published_at: datetime
     likes: int | None = Field(default=None, ge=0)
     text: str
+    content_type: Literal["user_original"]
 
 
 class PlatformDiscussionAggregate(BaseModel):

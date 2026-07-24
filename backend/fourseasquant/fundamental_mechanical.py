@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import date
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,7 @@ class BusinessSegment(BaseModel):
     name: str = Field(min_length=1)
     revenue: float
     cost: float
+    disclosed_profit: float | None = None
 
 
 class ShareholderActions(BaseModel):
@@ -36,7 +37,7 @@ class ShareholderActions(BaseModel):
     shares_before_issuance: float | None = Field(default=None, gt=0)
 
 
-class MonthlyFundamentalInput(BaseModel):
+class PersonalFundamentalMonthlyInput(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
     as_of_date: date
     price: float = Field(gt=0)
@@ -61,6 +62,8 @@ class MonthlyFundamentalInput(BaseModel):
     annual_cash_dividends: list[float] = Field(default_factory=list)
     historical_adjusted_pe: list[float] = Field(default_factory=list)
     peer_adjusted_pe: list[float] = Field(default_factory=list)
+    historical_pretax_margins: list[float] = Field(default_factory=list)
+    peer_pretax_margins: list[float] = Field(default_factory=list)
     business_segments: list[BusinessSegment]
     institution_holding_ratio: float | None = Field(default=None, ge=0, le=1)
     prior_institution_holding_ratio: float | None = Field(
@@ -72,7 +75,7 @@ class MonthlyFundamentalInput(BaseModel):
     floating_market_cap_universe: list[float]
 
 
-class MonthlyFundamentalSnapshot(BaseModel):
+class PersonalFundamentalMonthlySnapshot(BaseModel):
     rules_version: str
     code: str
     as_of_date: date
@@ -88,26 +91,45 @@ class MonthlyFundamentalSnapshot(BaseModel):
     net_cash_per_share: float
     cash_adjusted_price: float
     cash_adjusted_pe: float | None
+    short_term_interest_bearing_debt: float
+    long_term_interest_bearing_debt: float
     debt_to_equity: float | None
     short_term_debt_share: float | None
     dividend_payout_ratio: float | None
     consecutive_dividend_years: int
+    dividend_continuously_increased: bool | None
     free_cash_flow_per_share: float
     price_to_free_cash_flow: float | None
+    inventory_growth: float | None
+    revenue_growth: float | None
     inventory_growth_minus_revenue_growth: float | None
     pretax_margin: float | None
+    pretax_margin_historical_percentile: float | None
+    pretax_margin_peer_percentile: float | None
     main_business_name: str | None
     main_business_profit_share: float | None
     institution_holding_ratio: float | None
     institution_holding_change: float | None
+    capital_action_signal: CapitalActionSignal
     true_money_signal_score: float
     floating_market_cap: float
     floating_market_cap_percentile: float | None
 
 
-def calculate_monthly_snapshot(
-    source: MonthlyFundamentalInput,
-) -> MonthlyFundamentalSnapshot:
+class CapitalActionSignal(BaseModel):
+    insider_net_purchase_amount: float
+    insider_net_purchase_ratio: float
+    insider_adjustment: float
+    cancelled_buyback_amount: float
+    cancelled_buyback_ratio: float
+    buyback_bonus: float
+    dilution_ratio: float
+    dilution_penalty: float
+
+
+def calculate_personal_fundamental_monthly_snapshot(
+    source: PersonalFundamentalMonthlyInput,
+) -> PersonalFundamentalMonthlySnapshot:
     market_cap = source.price * source.total_shares
     floating_market_cap = source.price * source.floating_shares
     ordinary_pe = _positive_ratio(market_cap, source.ttm_parent_net_profit)
@@ -138,11 +160,11 @@ def calculate_monthly_snapshot(
         source.short_term_interest_bearing_debt
         + source.long_term_interest_bearing_debt
     )
-    debt_to_equity = _positive_denominator_ratio(
+    debt_to_equity = _ratio_when_denominator_positive(
         interest_bearing_debt,
         source.parent_equity,
     )
-    short_term_debt_share = _positive_denominator_ratio(
+    short_term_debt_share = _ratio_when_denominator_positive(
         source.short_term_interest_bearing_debt,
         interest_bearing_debt,
     )
@@ -156,8 +178,14 @@ def calculate_monthly_snapshot(
         source.institution_holding_ratio,
         source.prior_institution_holding_ratio,
     )
+    inventory_growth, revenue_growth = _inventory_growth_rates(source)
+    pretax_margin = _ratio_when_denominator_positive(
+        source.ttm_pretax_profit,
+        source.ttm_revenue,
+    )
+    capital_action_signal = _capital_action_signal(source.shareholder_actions)
 
-    return MonthlyFundamentalSnapshot(
+    return PersonalFundamentalMonthlySnapshot(
         rules_version=RULES_VERSION,
         code=source.code,
         as_of_date=source.as_of_date,
@@ -179,28 +207,45 @@ def calculate_monthly_snapshot(
         net_cash_per_share=net_cash_per_share,
         cash_adjusted_price=cash_adjusted_price,
         cash_adjusted_pe=cash_adjusted_pe,
+        short_term_interest_bearing_debt=source.short_term_interest_bearing_debt,
+        long_term_interest_bearing_debt=source.long_term_interest_bearing_debt,
         debt_to_equity=debt_to_equity,
         short_term_debt_share=short_term_debt_share,
-        dividend_payout_ratio=_positive_denominator_ratio(
+        dividend_payout_ratio=_ratio_when_denominator_positive(
             source.ttm_cash_dividend,
             source.ttm_parent_net_profit,
         ),
         consecutive_dividend_years=_trailing_positive_count(
             source.annual_cash_dividends
         ),
+        dividend_continuously_increased=_dividend_continuously_increased(
+            source.annual_cash_dividends
+        ),
         free_cash_flow_per_share=free_cash_flow / source.total_shares,
         price_to_free_cash_flow=_positive_ratio(market_cap, free_cash_flow),
-        inventory_growth_minus_revenue_growth=_inventory_growth_gap(source),
-        pretax_margin=_positive_denominator_ratio(
-            source.ttm_pretax_profit,
-            source.ttm_revenue,
+        inventory_growth=inventory_growth,
+        revenue_growth=revenue_growth,
+        inventory_growth_minus_revenue_growth=(
+            inventory_growth - revenue_growth
+            if inventory_growth is not None and revenue_growth is not None
+            else None
+        ),
+        pretax_margin=pretax_margin,
+        pretax_margin_historical_percentile=_percentile(
+            pretax_margin,
+            source.historical_pretax_margins,
+        ),
+        pretax_margin_peer_percentile=_percentile(
+            pretax_margin,
+            source.peer_pretax_margins,
         ),
         main_business_name=main_business_name,
         main_business_profit_share=main_business_profit_share,
         institution_holding_ratio=source.institution_holding_ratio,
         institution_holding_change=institution_holding_change,
-        true_money_signal_score=_true_money_signal_score(
-            source.shareholder_actions
+        capital_action_signal=capital_action_signal,
+        true_money_signal_score=capital_action_signal_score(
+            capital_action_signal
         ),
         floating_market_cap=floating_market_cap,
         floating_market_cap_percentile=_percentile(
@@ -216,7 +261,7 @@ def _positive_ratio(numerator: float, denominator: float) -> float | None:
     return numerator / denominator
 
 
-def _positive_denominator_ratio(
+def _ratio_when_denominator_positive(
     numerator: float,
     denominator: float,
 ) -> float | None:
@@ -276,9 +321,22 @@ def _trailing_positive_count(values: list[float]) -> int:
     return count
 
 
-def _inventory_growth_gap(
-    source: MonthlyFundamentalInput,
-) -> float | None:
+def _dividend_continuously_increased(
+    values: list[float],
+) -> bool | None:
+    trailing_count = _trailing_positive_count(values)
+    if trailing_count < 2:
+        return None
+    trailing = values[-trailing_count:]
+    return all(
+        current > previous
+        for previous, current in zip(trailing, trailing[1:], strict=False)
+    )
+
+
+def _inventory_growth_rates(
+    source: PersonalFundamentalMonthlyInput,
+) -> tuple[float | None, float | None]:
     current_inventory = source.current_inventory
     prior_inventory = source.prior_inventory
     current_revenue = source.current_revenue
@@ -289,13 +347,12 @@ def _inventory_growth_gap(
         or current_revenue is None
         or prior_revenue is None
     ):
-        return None
+        return None, None
     if prior_inventory <= 0 or prior_revenue <= 0:
-        return None
+        return None, None
     return (
-        current_inventory / prior_inventory
-        - 1
-        - (current_revenue / prior_revenue - 1)
+        current_inventory / prior_inventory - 1,
+        current_revenue / prior_revenue - 1,
     )
 
 
@@ -304,12 +361,25 @@ def _main_business(
 ) -> tuple[str | None, float | None]:
     if not segments:
         return None, None
-    gross_profits = [(segment, segment.revenue - segment.cost) for segment in segments]
-    total_gross_profit = sum(value for _, value in gross_profits)
-    if total_gross_profit <= 0:
+    use_disclosed_profit = all(
+        segment.disclosed_profit is not None for segment in segments
+    )
+    profits = [
+        (
+            segment,
+            (
+                cast(float, segment.disclosed_profit)
+                if use_disclosed_profit
+                else segment.revenue - segment.cost
+            ),
+        )
+        for segment in segments
+    ]
+    total_profit = sum(value for _, value in profits)
+    if total_profit <= 0:
         return None, None
-    segment, gross_profit = max(gross_profits, key=lambda item: item[1])
-    return segment.name, gross_profit / total_gross_profit
+    segment, profit = max(profits, key=lambda item: item[1])
+    return segment.name, profit / total_profit
 
 
 def _optional_difference(
@@ -321,7 +391,7 @@ def _optional_difference(
     return current - prior
 
 
-def _true_money_signal_score(actions: ShareholderActions) -> float:
+def _capital_action_signal(actions: ShareholderActions) -> CapitalActionSignal:
     insider_ratio = (
         actions.insider_net_purchase_amount
         / actions.average_floating_market_cap
@@ -338,9 +408,28 @@ def _true_money_signal_score(actions: ShareholderActions) -> float:
             actions.newly_issued_shares / actions.shares_before_issuance
         )
     dilution_penalty = min(20.0, dilution_ratio / 0.10 * 20)
+    return CapitalActionSignal(
+        insider_net_purchase_amount=actions.insider_net_purchase_amount,
+        insider_net_purchase_ratio=insider_ratio,
+        insider_adjustment=insider_adjustment,
+        cancelled_buyback_amount=actions.cancelled_buyback_amount,
+        cancelled_buyback_ratio=buyback_ratio,
+        buyback_bonus=buyback_bonus,
+        dilution_ratio=dilution_ratio,
+        dilution_penalty=dilution_penalty,
+    )
+
+
+def capital_action_signal_score(signal: CapitalActionSignal) -> float:
     return max(
         0.0,
-        min(100.0, 50 + insider_adjustment + buyback_bonus - dilution_penalty),
+        min(
+            100.0,
+            50
+            + signal.insider_adjustment
+            + signal.buyback_bonus
+            - signal.dilution_penalty,
+        ),
     )
 
 

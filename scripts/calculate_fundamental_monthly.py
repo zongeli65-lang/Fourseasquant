@@ -13,10 +13,12 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "backend"))
 
 from fourseasquant.database import database_path, initialize_database  # noqa: E402
 from fourseasquant.fundamental_mechanical import (  # noqa: E402
-    MonthlyFundamentalInput,
-    calculate_monthly_snapshot,
+    PersonalFundamentalMonthlyInput,
+    calculate_personal_fundamental_monthly_snapshot,
 )
-from fourseasquant.fundamental_repository import save_monthly_snapshot  # noqa: E402
+from fourseasquant.fundamental_repository import (  # noqa: E402
+    save_personal_fundamental_monthly_snapshot,
+)
 
 
 def main() -> int:
@@ -28,11 +30,11 @@ def main() -> int:
     arguments = parser.parse_args()
     raw = cast(dict[str, object], json.loads(arguments.input.read_text()))
     source_urls = cast(list[str], raw.pop("source_urls", []))
-    source = MonthlyFundamentalInput.model_validate(raw)
-    snapshot = calculate_monthly_snapshot(source)
+    source = PersonalFundamentalMonthlyInput.model_validate(raw)
+    snapshot = calculate_personal_fundamental_monthly_snapshot(source)
     path = arguments.database or database_path()
     initialize_database(path)
-    saved = save_monthly_snapshot(
+    saved = save_personal_fundamental_monthly_snapshot(
         path,
         snapshot,
         source_urls=source_urls,

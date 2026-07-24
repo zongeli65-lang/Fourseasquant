@@ -7,7 +7,8 @@
       "url": "https://example.test/post/1",
       "published_at": "2026-07-24T10:00:00+08:00",
       "likes": 12,
-      "text": "示例利好讨论"
+      "text": "示例利好讨论",
+      "content_type": "user_original"
     },
     {
       "platform": "eastmoney_guba",
@@ -16,7 +17,8 @@
       "url": "https://example.test/post/2",
       "published_at": "2026-07-24T10:30:00+08:00",
       "likes": 3,
-      "text": "示例利空讨论"
+      "text": "示例利空讨论",
+      "content_type": "user_original"
     }
   ],
   "heat_universe": [1.0, 4.0, 10.0]

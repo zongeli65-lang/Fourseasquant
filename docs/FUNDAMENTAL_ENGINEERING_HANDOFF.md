@@ -11,6 +11,7 @@
 - 流通市值全市场百分位；
 - 内部人士、注销回购和稀释的真金白银信号分；
 - 东方财富股吧、雪球讨论的固定词典情绪、点赞对数加权和平台合并；
+- 双平台结果在两边数据齐全时自动合并并单独落库；
 - 只按帖子编号进行技术去重，不进行内容去重；
 - 财报网址与内容哈希复用；
 - 月度快照只保存变化字段；
@@ -65,10 +66,11 @@ uv run pytest -q \
 | 表 | 内容 |
 |---|---|
 | `fundamental_parsed_evidence` | 来源网址、内容哈希和结构化结果 |
-| `fundamental_monthly_snapshots` | 月度变化字段和来源网址 |
+| `personal_fundamental_monthly_snapshots` | 个人基本面月度变化字段和来源网址 |
 | `discussion_daily_aggregates` | 平台每日汇总 |
+| `discussion_daily_combined_signals` | 东方财富股吧与雪球各占一半的综合结果 |
 | `discussion_post_references` | 最近三十天单帖引用，不含正文 |
-| `fundamental_board_snapshots` | 完整板块及成分股快照 |
+| `fundamental_board_candidate_snapshots` | 完整板块候选及成分股快照 |
 
 ## 5. 尚未实现
 
@@ -78,6 +80,8 @@ uv run pytest -q \
 - 东方财富与同花顺热门股票榜的统一候选池；
 - 月末定时任务和每日舆情定时任务；
 - 网页展示。
+
+真实东方财富板块抽查在 2026-07-24 被本机当前网络代理断开；本地 AKShare 1.18.70 源码列定义与适配器一致，完整性、字段和保存行为已由测试覆盖，但全量联网导入仍不得宣称已经实测成功。
 
 这些缺口不能用模拟数据冒充。下一阶段应优先完成巨潮结构化输入适配器和公开讨论采集器，再接定时任务。
 

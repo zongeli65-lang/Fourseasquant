@@ -12,40 +12,40 @@ from pydantic import BaseModel, Field
 BoardKind = Literal["industry", "concept"]
 
 
-class DiscoveryBoardMember(BaseModel):
+class BoardCandidateMember(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
     name: str = Field(min_length=1)
 
 
-class DiscoveryBoard(BaseModel):
+class BoardCandidate(BaseModel):
     board_id: str = Field(min_length=1)
     source_board_code: str = Field(min_length=1)
     name: str = Field(min_length=1)
     kind: BoardKind
-    members: list[DiscoveryBoardMember]
+    members: list[BoardCandidateMember]
 
 
-class DiscoveryBoardSnapshot(BaseModel):
+class BoardCandidateSnapshot(BaseModel):
     source: Literal["eastmoney"]
     effective_date: date
     complete: bool
-    boards: list[DiscoveryBoard]
+    boards: list[BoardCandidate]
     errors: list[str]
 
 
-def collect_eastmoney_board_snapshot(
+def collect_eastmoney_board_candidate_snapshot(
     *,
     industry_catalog: pd.DataFrame,
     concept_catalog: pd.DataFrame,
     constituent_fetcher: Callable[[str], pd.DataFrame],
     effective_date: date,
     max_workers: int = 4,
-) -> DiscoveryBoardSnapshot:
+) -> BoardCandidateSnapshot:
     catalog = [
         *_catalog_rows(industry_catalog, "industry"),
         *_catalog_rows(concept_catalog, "concept"),
     ]
-    boards: list[DiscoveryBoard] = []
+    boards: list[BoardCandidate] = []
     errors: list[str] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_board = {
@@ -64,7 +64,7 @@ def collect_eastmoney_board_snapshot(
                 errors.append(f"{board_code}: {error}")
                 continue
             boards.append(
-                DiscoveryBoard(
+                BoardCandidate(
                     board_id=f"em:{board_kind}:{board_code}",
                     source_board_code=board_code,
                     name=board_name,
@@ -74,7 +74,7 @@ def collect_eastmoney_board_snapshot(
             )
     boards.sort(key=lambda board: board.board_id)
     errors.sort()
-    return DiscoveryBoardSnapshot(
+    return BoardCandidateSnapshot(
         source="eastmoney",
         effective_date=effective_date,
         complete=not errors and len(boards) == len(catalog),
@@ -100,13 +100,13 @@ def _catalog_rows(
     ]
 
 
-def _constituents(frame: pd.DataFrame) -> list[DiscoveryBoardMember]:
+def _constituents(frame: pd.DataFrame) -> list[BoardCandidateMember]:
     required = {"代码", "名称"}
     missing = required.difference(frame.columns)
     if missing:
         raise ValueError(f"板块成分缺少字段: {sorted(missing)}")
     return [
-        DiscoveryBoardMember(code=str(code).zfill(6), name=str(name))
+        BoardCandidateMember(code=str(code).zfill(6), name=str(name))
         for code, name in frame.loc[:, ["代码", "名称"]].itertuples(
             index=False,
             name=None,

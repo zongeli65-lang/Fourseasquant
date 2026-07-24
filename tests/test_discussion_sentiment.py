@@ -5,6 +5,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import ValidationError
 
 from fourseasquant.discussion_sentiment import (
     DiscussionPost,
@@ -30,6 +31,7 @@ def test_discussion_heat_keeps_repeated_content_but_not_crawler_duplicates() -> 
             published_at=published_at,
             likes=0,
             text="重大利好",
+            content_type="user_original",
         ),
         DiscussionPost(
             platform="eastmoney_guba",
@@ -39,6 +41,7 @@ def test_discussion_heat_keeps_repeated_content_but_not_crawler_duplicates() -> 
             published_at=published_at,
             likes=3,
             text="重大利好",
+            content_type="user_original",
         ),
         DiscussionPost(
             platform="eastmoney_guba",
@@ -48,6 +51,7 @@ def test_discussion_heat_keeps_repeated_content_but_not_crawler_duplicates() -> 
             published_at=published_at,
             likes=3,
             text="重大利好",
+            content_type="user_original",
         ),
         DiscussionPost(
             platform="eastmoney_guba",
@@ -57,6 +61,7 @@ def test_discussion_heat_keeps_repeated_content_but_not_crawler_duplicates() -> 
             published_at=published_at,
             likes=8,
             text="股东减持，明显利空",
+            content_type="user_original",
         ),
         DiscussionPost(
             platform="eastmoney_guba",
@@ -66,6 +71,7 @@ def test_discussion_heat_keeps_repeated_content_but_not_crawler_duplicates() -> 
             published_at=published_at,
             likes=0,
             text="大家怎么看",
+            content_type="user_original",
         ),
     ]
     expected_heat = (
@@ -116,6 +122,7 @@ def test_conflicting_or_missing_terms_are_neutral() -> None:
                 published_at=published_at,
                 likes=None,
                 text="增长是利好，但减持也是利空",
+                content_type="user_original",
             ),
             DiscussionPost(
                 platform="xueqiu",
@@ -125,6 +132,7 @@ def test_conflicting_or_missing_terms_are_neutral() -> None:
                 published_at=published_at,
                 likes=None,
                 text="今天开会讨论",
+                content_type="user_original",
             ),
         ],
         heat_universe=[2],
@@ -154,6 +162,7 @@ def test_eastmoney_and_xueqiu_are_combined_equally_only_when_both_exist() -> Non
                 published_at=published_at,
                 likes=0,
                 text="利好",
+                content_type="user_original",
             )
         ],
         heat_universe=[1, 2],
@@ -168,6 +177,7 @@ def test_eastmoney_and_xueqiu_are_combined_equally_only_when_both_exist() -> Non
                 published_at=published_at,
                 likes=0,
                 text="利空",
+                content_type="user_original",
             )
         ],
         heat_universe=[1],
@@ -179,3 +189,19 @@ def test_eastmoney_and_xueqiu_are_combined_equally_only_when_both_exist() -> Non
     assert combined.heat_percentile == pytest.approx(75)
     assert combined.weighted_sentiment == pytest.approx(0)
     assert combine_platform_aggregates(eastmoney, None) is None
+
+
+def test_official_or_reposted_content_cannot_enter_discussion_input() -> None:
+    with pytest.raises(ValidationError):
+        DiscussionPost.model_validate(
+            {
+                "platform": "xueqiu",
+                "post_id": "1",
+                "code": "600000",
+                "url": "https://example.test/1",
+                "published_at": "2026-07-24T10:00:00+08:00",
+                "likes": 1,
+                "text": "公司公告转载",
+                "content_type": "announcement",
+            }
+        )

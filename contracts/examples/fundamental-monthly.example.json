@@ -32,9 +32,21 @@
   "annual_cash_dividends": [10, 12, 15, 18, 20],
   "historical_adjusted_pe": [8, 9, 11, 12],
   "peer_adjusted_pe": [7, 10, 13],
+  "historical_pretax_margins": [0.08, 0.10, 0.12],
+  "peer_pretax_margins": [0.09, 0.1153846154, 0.15],
   "business_segments": [
-    {"name": "业务甲", "revenue": 600, "cost": 300},
-    {"name": "业务乙", "revenue": 800, "cost": 600}
+    {
+      "name": "业务甲",
+      "revenue": 600,
+      "cost": 300,
+      "disclosed_profit": 50
+    },
+    {
+      "name": "业务乙",
+      "revenue": 800,
+      "cost": 600,
+      "disclosed_profit": 80
+    }
   ],
   "institution_holding_ratio": 0.12,
   "prior_institution_holding_ratio": 0.10,
