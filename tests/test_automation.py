@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from threading import Barrier, Thread
+from time import sleep
 from zoneinfo import ZoneInfo
 
 from pytest import MonkeyPatch
@@ -12,11 +13,17 @@ import fourseasquant.automation as automation_module
 from fourseasquant.automation import (
     AutomationOutcome,
     RecordingNotifier,
+    TargetDateClaimLease,
     run_scheduled_task,
     run_startup_catchup,
 )
-from fourseasquant.daily_snapshots import execute_daily_task
-from fourseasquant.database import initialize_database, latest_snapshot, task_runs
+from fourseasquant.daily_snapshots import TaskRunResponse, TaskTrigger, execute_daily_task
+from fourseasquant.database import (
+    claim_automation_date,
+    initialize_database,
+    latest_snapshot,
+    task_runs,
+)
 from fourseasquant.settings import SettingsUpdate, save_settings
 
 
@@ -79,6 +86,45 @@ def test_ready_database_skips_schema_initialization_on_periodic_wakeup(
 
     assert outcome.status == "skipped"
     assert initialization_calls == 0
+
+
+def test_production_schedule_retries_when_snapshot_exists_but_candles_are_stale(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "stale-candles.db"
+    initialize_database(database)
+    target_date = datetime(2026, 7, 21, tzinfo=BEIJING).date()
+    execute_daily_task(target_date, path=database)
+    real_candle_runs: list[Path] = []
+
+    def run_with_candles(
+        run_date: date,
+        *,
+        path: Path,
+        trigger_method: TaskTrigger,
+    ) -> TaskRunResponse:
+        real_candle_runs.append(path)
+        return execute_daily_task(
+            run_date,
+            path=path,
+            trigger_method=trigger_method,
+        )
+
+    monkeypatch.setattr(automation_module, "database_path", lambda: database)
+    monkeypatch.setattr(
+        automation_module,
+        "execute_daily_task_with_candles",
+        run_with_candles,
+    )
+
+    outcome = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 30, tzinfo=BEIJING),
+        notifier=RecordingNotifier(),
+    )
+
+    assert outcome.status == "succeeded"
+    assert real_candle_runs == [database]
 
 
 def test_non_trading_day_is_skipped_without_creating_a_task(tmp_path: Path) -> None:
@@ -255,3 +301,30 @@ def test_concurrent_automatic_triggers_publish_and_notify_only_once(
     assert sorted(outcome.status for outcome in outcomes) == ["skipped", "succeeded"]
     assert len(task_runs(database)) == 1
     assert len(notifier.events) == 1
+
+
+def test_long_running_target_date_claim_is_renewed_before_expiry(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "claim-heartbeat.db"
+    initialize_database(database)
+    target = date(2026, 7, 24)
+    started = datetime(2026, 7, 24, 16, 30, tzinfo=BEIJING)
+    lease = TargetDateClaimLease.acquire(
+        database,
+        target,
+        claimed_at=started,
+        heartbeat_seconds=0.01,
+        now=lambda: started.replace(hour=18, minute=29, second=59),
+    )
+    assert lease is not None
+
+    with lease:
+        sleep(0.05)
+        competing = claim_automation_date(
+            database,
+            target,
+            started.replace(hour=18, minute=30, second=1),
+        )
+
+    assert competing is None

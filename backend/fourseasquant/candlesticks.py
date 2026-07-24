@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 from fourseasquant.akshare_history import HISTORY_QFQ_SOURCE, HISTORY_SOURCE
 from fourseasquant.database import (
     HistoricalBenchmarkFactRow,
+    active_automation_claim_exists,
+    latest_task_run,
     save_historical_benchmark_fact,
 )
 
@@ -67,6 +69,13 @@ class CandleSeries(BaseModel):
     coverage_end: date
     candles: list[CandlePoint]
     trades: list[TradeMarker]
+
+
+class CandleAvailability(BaseModel):
+    requested_date: date
+    latest_published_date: date | None
+    status: Literal["ready", "updating", "stale", "unavailable"]
+    message: str
 
 
 class CandleDataNotFound(RuntimeError):
@@ -187,6 +196,55 @@ def latest_candle_publication(path: Path, requested_date: date) -> date | None:
             (requested_date.isoformat(),),
         ).fetchone()
     return date.fromisoformat(cast(str, row[0])) if row else None
+
+
+def read_candle_availability(
+    path: Path,
+    requested_date: date,
+) -> CandleAvailability:
+    latest = latest_candle_publication(path, requested_date)
+    if latest == requested_date:
+        return CandleAvailability(
+            requested_date=requested_date,
+            latest_published_date=latest,
+            status="ready",
+            message=f"目标日期 {requested_date.isoformat()} 的K线已经完整发布。",
+        )
+    task = latest_task_run(path, requested_date)
+    if (
+        task is not None
+        and task.status == "running"
+        and active_automation_claim_exists(
+            path,
+            requested_date,
+            datetime.now(ZoneInfo("Asia/Shanghai")),
+        )
+    ):
+        return CandleAvailability(
+            requested_date=requested_date,
+            latest_published_date=latest,
+            status="updating",
+            message=(
+                f"K线正在更新：目标日期 {requested_date.isoformat()}，"
+                f"当前完整版本 {latest.isoformat() if latest else '尚无'}。"
+            ),
+        )
+    if latest is None:
+        return CandleAvailability(
+            requested_date=requested_date,
+            latest_published_date=None,
+            status="unavailable",
+            message=f"目标日期 {requested_date.isoformat()} 前尚无完整K线版本。",
+        )
+    return CandleAvailability(
+        requested_date=requested_date,
+        latest_published_date=latest,
+        status="stale",
+        message=(
+            f"K线尚未完整：目标日期 {requested_date.isoformat()}，"
+            f"当前完整版本 {latest.isoformat()}。请运行或重试数据更新。"
+        ),
+    )
 
 
 def _published_qfq_source(path: Path, actual_date: date) -> str:

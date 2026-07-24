@@ -1299,6 +1299,29 @@ h2 {
   border-color: #2d4869 !important;
 }
 
+.kline-availability {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #7b6233;
+  border-radius: 7px;
+  color: #f0c46f;
+  background: #211b10;
+  font-size: 12px;
+}
+
+.kline-availability--stale,
+.kline-availability--unavailable {
+  border-color: #6f3f48;
+  color: #f19aa4;
+  background: #241318;
+}
+
+.kline-availability--ready {
+  border-color: #2f6b57;
+  color: #8fd8bc;
+  background: #10251e;
+}
+
 .kline-message {
   min-height: 240px;
   display: grid;

@@ -16,6 +16,7 @@ from fourseasquant.database import (
     latest_market_facts,
     publish_snapshot,
     release_automation_date,
+    renew_automation_date_claim,
     save_history_symbol_batch,
     save_market_facts,
 )
@@ -124,6 +125,33 @@ def test_stale_owner_cannot_release_newer_automation_claim(tmp_path: Path) -> No
     assert third_claim is None
 
     release_automation_date(database, target, second_claim)
+
+
+def test_renewed_automation_claim_cannot_be_taken_over_after_two_hours(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "renewed-claim.db"
+    initialize_database(database)
+    target = date(2026, 7, 24)
+    started = datetime(2026, 7, 24, 16, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    claim_id = claim_automation_date(database, target, started)
+    assert claim_id is not None
+
+    renewed = renew_automation_date_claim(
+        database,
+        target,
+        claim_id,
+        started + timedelta(seconds=7_199),
+    )
+    competing_claim = claim_automation_date(
+        database,
+        target,
+        started + timedelta(seconds=7_201),
+    )
+
+    assert renewed is True
+    assert competing_claim is None
+    release_automation_date(database, target, claim_id)
 
 
 def test_snapshot_and_technical_publication_activate_atomically(

@@ -1035,6 +1035,42 @@ def release_automation_date(path: Path, target_date: date, claim_id: str) -> Non
         )
 
 
+def renew_automation_date_claim(
+    path: Path,
+    target_date: date,
+    claim_id: str,
+    renewed_at: datetime,
+) -> bool:
+    with sqlite3.connect(path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE automation_claims
+            SET claimed_at = ?
+            WHERE target_date = ? AND claim_id = ?
+            """,
+            (renewed_at.isoformat(), target_date.isoformat(), claim_id),
+        )
+    return cursor.rowcount == 1
+
+
+def active_automation_claim_exists(
+    path: Path,
+    target_date: date,
+    checked_at: datetime,
+    *,
+    stale_after_seconds: int = 7_200,
+) -> bool:
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            "SELECT claimed_at FROM automation_claims WHERE target_date = ?",
+            (target_date.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return False
+    claimed_at = datetime.fromisoformat(cast(str, row[0]))
+    return claimed_at.timestamp() >= checked_at.timestamp() - stale_after_seconds
+
+
 def scheduled_attempt_exists(path: Path, target_date: date) -> bool:
     with sqlite3.connect(path) as connection:
         row = connection.execute(

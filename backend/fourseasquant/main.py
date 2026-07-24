@@ -30,13 +30,15 @@ from fourseasquant.backfill import (
 )
 from fourseasquant.candle_daily_task import execute_daily_task_with_candles
 from fourseasquant.candlesticks import (
+    CandleAvailability,
     CandleDataNotFound,
     CandleSeries,
     SecuritySearchResult,
+    read_candle_availability,
     read_candle_series,
     search_eligible_securities,
 )
-from fourseasquant.automation import run_startup_catchup
+from fourseasquant.automation import TargetDateClaimLease, run_startup_catchup
 
 from fourseasquant.daily_snapshots import (
     DashboardResponse,
@@ -280,6 +282,14 @@ def candle_series(
 
 
 @app.get(
+    "/api/market-data/candles/status",
+    response_model=CandleAvailability,
+)
+def candle_availability(target_date: date) -> CandleAvailability:
+    return read_candle_availability(database_path(), target_date)
+
+
+@app.get(
     "/api/technical-scores/status",
     response_model=TechnicalScoreStatus,
 )
@@ -455,9 +465,7 @@ def fundamental_overview(
 
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)
 def run_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
-    if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
-        return execute_daily_task(request.target_date)
-    return execute_daily_task_with_candles(request.target_date)
+    return _run_claimed_manual_task(request.target_date, trigger_method="manual")
 
 
 if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
@@ -497,12 +505,31 @@ if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
 
 @app.post("/api/tasks/daily/retry", response_model=TaskRunResponse, status_code=201)
 def retry_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
-    if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
-        return execute_daily_task(request.target_date, trigger_method="retry")
-    return execute_daily_task_with_candles(
-        request.target_date,
-        trigger_method="retry",
+    return _run_claimed_manual_task(request.target_date, trigger_method="retry")
+
+
+def _run_claimed_manual_task(
+    target_date: date,
+    *,
+    trigger_method: Literal["manual", "retry"],
+) -> TaskRunResponse:
+    path = database_path()
+    lease = TargetDateClaimLease.acquire(
+        path,
+        target_date,
     )
+    if lease is None:
+        raise HTTPException(status_code=409, detail="该目标日期已有任务正在运行")
+    with lease:
+        if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
+            return execute_daily_task(
+                target_date,
+                trigger_method=trigger_method,
+            )
+        return execute_daily_task_with_candles(
+            target_date,
+            trigger_method=trigger_method,
+        )
 
 
 @app.get("/api/tasks/history", response_model=list[TaskHistoryItem])

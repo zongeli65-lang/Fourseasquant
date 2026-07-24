@@ -40,6 +40,13 @@ type CandleSeries = {
   trades: TradeMarker[];
 };
 
+type CandleAvailability = {
+  requested_date: string;
+  latest_published_date: string | null;
+  status: "ready" | "updating" | "stale" | "unavailable";
+  message: string;
+};
+
 type SearchResult = {
   code: string;
   name: string;
@@ -127,6 +134,7 @@ export function KlineExplorer({
 }) {
   const [adjustment, setAdjustment] = useState<"raw" | "qfq">("qfq");
   const [series, setSeries] = useState<CandleSeries | null>(null);
+  const [availability, setAvailability] = useState<CandleAvailability | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "empty" | "error">("loading");
   const [range, setRange] = useState<RangeKey>("1y");
   const [visibleCount, setVisibleCount] = useState(260);
@@ -136,6 +144,24 @@ export function KlineExplorer({
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const drag = useRef<{ x: number; offset: number } | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({ target_date: targetDate });
+    void fetch(`/api/market-data/candles/status?${params}`, {
+      signal: controller.signal,
+    })
+      .then((response) => response.ok
+        ? response.json() as Promise<CandleAvailability>
+        : null)
+      .then((result) => setAvailability(result))
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setAvailability(null);
+        }
+      });
+    return () => controller.abort();
+  }, [targetDate]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -278,6 +304,16 @@ export function KlineExplorer({
           )}
         </div>
       </header>
+
+      {availability && (
+        <p
+          className={`kline-availability kline-availability--${availability.status}`}
+          data-testid="candle-availability"
+          role="status"
+        >
+          {availability.message}
+        </p>
+      )}
 
       <div className="kline-toolbar">
         <div className="kline-index-tabs" aria-label="市场指数">
