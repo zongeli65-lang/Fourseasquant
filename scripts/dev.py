@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -31,13 +32,9 @@ def stop_process(process: subprocess.Popen[str]) -> None:
         process.wait(timeout=5)
 
 
-def main() -> int:
-    environment = os.environ.copy()
+def build_backend_command(environment: Mapping[str, str]) -> list[str]:
     api_port = environment.get("FOURSEASQUANT_API_PORT", "8000")
-    web_port = environment.get("FOURSEASQUANT_WEB_PORT", "5173")
-    environment["FOURSEASQUANT_API_ORIGIN"] = f"http://127.0.0.1:{api_port}"
-    environment["FOURSEASQUANT_WEB_ORIGIN"] = f"http://127.0.0.1:{web_port}"
-    backend_command = [
+    command = [
         sys.executable,
         "-m",
         "uvicorn",
@@ -49,8 +46,18 @@ def main() -> int:
         "--port",
         api_port,
     ]
-    if environment.get("FOURSEASQUANT_RELOAD", "1") == "1":
-        backend_command.append("--reload")
+    if environment.get("FOURSEASQUANT_RELOAD", "0") == "1":
+        command.append("--reload")
+    return command
+
+
+def main() -> int:
+    environment = os.environ.copy()
+    api_port = environment.get("FOURSEASQUANT_API_PORT", "8000")
+    web_port = environment.get("FOURSEASQUANT_WEB_PORT", "5173")
+    environment["FOURSEASQUANT_API_ORIGIN"] = f"http://127.0.0.1:{api_port}"
+    environment["FOURSEASQUANT_WEB_ORIGIN"] = f"http://127.0.0.1:{web_port}"
+    backend_command = build_backend_command(environment)
     environment.setdefault(
         "FOURSEASQUANT_DB_PATH", str(REPOSITORY_ROOT / "data" / "fourseasquant.db")
     )

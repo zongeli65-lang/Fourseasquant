@@ -23,6 +23,7 @@ npm run dev
 - 后端健康接口：`http://127.0.0.1:8000/api/health`
 
 开发进程会初始化本地数据库。按 `Control-C` 可同时停止前端和后端。
+后端默认不启用自动重载，避免长期运行时只剩文件扫描器而接口失去响应；需要修改 Python 代码并自动重载时，显式运行 `FOURSEASQUANT_RELOAD=1 npm run dev`。
 
 网站采用多页面桌面工作台结构：总览、市场、行情、策略、基本面和任务分别使用
 `/overview`、`/market`、`/quotes`、`/strategy`、`/fundamentals` 和 `/tasks`。根地址默认进入总览，页面切换与刷新会保留目标日期和所选股票。完整的品牌、布局和交互约束见[前端设计系统](docs/FRONTEND_DESIGN_SYSTEM.md)。
