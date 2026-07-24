@@ -99,6 +99,7 @@ def refresh_one_year_candles(
         qfq_range_start=adjusted.range_start,
         qfq_source=qfq_source,
         new_stock_exclusion_days=settings.new_stock_exclusion_days,
+        listing_dates=raw.listing_dates,
         snapshot=coverage_snapshot,
     )
     import_index_candles(
@@ -157,6 +158,7 @@ def _validate_security_daily_fact_coverage(
     qfq_range_start: date,
     qfq_source: str,
     new_stock_exclusion_days: int,
+    listing_dates: dict[str, date],
     snapshot: pd.DataFrame,
 ) -> None:
     if snapshot.empty or "代码" not in snapshot.columns or "成交量" not in snapshot.columns:
@@ -174,10 +176,11 @@ def _validate_security_daily_fact_coverage(
     active_codes = set(frame.loc[frame["成交量"] > 0, "代码"].tolist())
     target = requested_end_date.isoformat()
     with sqlite3.connect(path) as connection:
-        previously_eligible = _eligible_prior_codes(
+        previously_eligible = _eligible_codes(
             connection,
             target=target,
             new_stock_exclusion_days=new_stock_exclusion_days,
+            listing_dates=listing_dates,
         )
         raw_codes = _codes_for_source_date(connection, HISTORY_SOURCE, target)
         qfq_codes = _codes_for_source_date(connection, qfq_source, target)
@@ -200,11 +203,12 @@ def _validate_security_daily_fact_coverage(
         raise CandleRefreshError(f"目标交易日个股日频事实缺失：{missing_codes}")
 
 
-def _eligible_prior_codes(
+def _eligible_codes(
     connection: sqlite3.Connection,
     *,
     target: str,
     new_stock_exclusion_days: int,
+    listing_dates: dict[str, date],
 ) -> set[str]:
     benchmark_dates = [
         str(row[0])
@@ -218,6 +222,15 @@ def _eligible_prior_codes(
         )
     ]
     eligible: set[str] = set()
+    eligible.update(
+        code
+        for code, listing_date in listing_dates.items()
+        if sum(
+            listing_date.isoformat() <= trading_date <= target
+            for trading_date in benchmark_dates
+        )
+        >= new_stock_exclusion_days
+    )
     for code, last_date, listing_days in connection.execute(
         """
         SELECT code, MAX(actual_data_date), MAX(listing_trading_days)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -282,7 +282,6 @@ def test_coverage_ignores_stocks_still_inside_new_stock_exclusion_window(
             ) VALUES (?, ?, ?, ?, 10, 11, 9, 10, 10, 0, 100, 1000, ?)
             """,
             [
-                ("akshare_sina_daily", "2026-07-22", "001237", "惠康科技", 43),
                 ("akshare_sina_daily", "2026-07-23", "600000", "浦发银行", 100),
                 ("akshare_sina_daily", "2026-07-24", "600000", "浦发银行", 101),
                 (
@@ -302,6 +301,7 @@ def test_coverage_ignores_stocks_still_inside_new_stock_exclusion_window(
         qfq_range_start=date(2025, 7, 24),
         qfq_source="akshare_sina_daily_qfq:2026-07-24",
         new_stock_exclusion_days=60,
+        listing_dates={"001237": date(2026, 6, 18)},
         snapshot=pd.DataFrame(
             [
                 {"代码": "001237", "名称": "惠康科技", "成交量": 100},
@@ -309,3 +309,37 @@ def test_coverage_ignores_stocks_still_inside_new_stock_exclusion_window(
             ]
         ),
     )
+
+
+def test_coverage_requires_stock_on_first_eligible_trading_day(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "first-eligible-day.db"
+    initialize_database(database)
+    first_trading_day = date(2026, 5, 26)
+    with sqlite3.connect(database) as connection:
+        connection.executemany(
+            """
+            INSERT INTO historical_benchmark_facts (
+                source, actual_data_date, name, open, high, low, close, volume
+            ) VALUES ('akshare_sina_daily', ?, '沪深300', 1, 1, 1, 1, 1)
+            """,
+            [
+                ((first_trading_day + timedelta(days=offset)).isoformat(),)
+                for offset in range(60)
+            ],
+        )
+
+    with pytest.raises(CandleRefreshError, match="001237"):
+        candle_refresh_module._validate_security_daily_fact_coverage(
+            database,
+            requested_end_date=date(2026, 7, 24),
+            raw_range_start=date(2025, 7, 24),
+            qfq_range_start=date(2025, 7, 24),
+            qfq_source="akshare_sina_daily_qfq:2026-07-24",
+            new_stock_exclusion_days=60,
+            listing_dates={"001237": first_trading_day},
+            snapshot=pd.DataFrame(
+                [{"代码": "001237", "名称": "惠康科技", "成交量": 100}]
+            ),
+        )

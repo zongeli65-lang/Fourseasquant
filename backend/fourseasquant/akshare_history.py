@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import sleep
@@ -54,6 +54,7 @@ class HistoryImportSummary:
     completed_symbols: int
     failed_codes: list[str]
     published_days: int
+    listing_dates: dict[str, date] = field(default_factory=dict)
 
 
 class HistoryDataQualityError(RuntimeError):
@@ -194,6 +195,9 @@ class AkshareOneYearHistoryImporter:
             completed_symbols=len(completed_after),
             failed_codes=sorted(failed_codes),
             published_days=published_days,
+            listing_dates={
+                listing.code: listing.listing_date for listing in listings
+            },
         )
 
     def _report_progress(
