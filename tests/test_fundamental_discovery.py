@@ -56,7 +56,7 @@ def test_eastmoney_industry_and_concept_boards_keep_their_memberships() -> None:
     assert snapshot.boards[1].members[1].name == "平安银行"
 
 
-def test_failed_board_fetch_makes_snapshot_incomplete_without_fake_members() -> None:
+def test_failed_board_fetch_makes_candidate_snapshot_incomplete() -> None:
     industry_catalog = pd.DataFrame(
         [{"板块名称": "银行", "板块代码": "BK0475"}]
     )

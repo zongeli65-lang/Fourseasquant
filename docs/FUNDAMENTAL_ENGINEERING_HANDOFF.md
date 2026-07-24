@@ -26,7 +26,7 @@
 | `backend/fourseasquant/fundamental_mechanical.py` | 月度四支柱计算 |
 | `backend/fourseasquant/discussion_sentiment.py` | 每日讨论分类、热度和平台合并 |
 | `backend/fourseasquant/fundamental_discovery.py` | 东方财富板块与成分股标准化 |
-| `backend/fourseasquant/fundamental_repository.py` | 证据、变化快照、讨论引用和板块快照保存 |
+| `backend/fourseasquant/fundamental_repository.py` | 证据、变化快照、讨论引用和板块候选快照保存 |
 | `scripts/calculate_fundamental_monthly.py` | 月度结构化输入命令行入口 |
 | `scripts/aggregate_discussion_day.py` | 每日讨论结构化输入命令行入口 |
 | `scripts/import_fundamental_boards.py` | AKShare 东方财富板块实时导入 |

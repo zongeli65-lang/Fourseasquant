@@ -469,7 +469,7 @@ def save_board_candidate_snapshot(
     collected_at: datetime,
 ) -> BoardCandidateSnapshotSaveResult:
     if not snapshot.complete:
-        raise ValueError("板块快照不完整，禁止写入正式候选库")
+        raise ValueError("板块候选快照不完整，禁止写入正式候选库")
     payload_json = snapshot.model_dump_json()
     content_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     with sqlite3.connect(path) as connection:

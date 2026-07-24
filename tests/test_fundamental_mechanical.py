@@ -47,7 +47,7 @@ def test_personal_fundamental_monthly_snapshot_calculates_four_pillars() -> None
             historical_adjusted_pe=[8.0, 9.0, 11.0, 12.0],
             peer_adjusted_pe=[7.0, 10.0, 13.0],
             historical_pretax_margins=[0.08, 0.10, 0.12],
-            peer_pretax_margins=[0.09, 150 / 1_300, 0.15],
+            peer_pretax_margins=[-0.10, 150 / 1_300, 0.15],
             business_segments=[
                 BusinessSegment(
                     name="业务甲",
@@ -110,6 +110,9 @@ def test_personal_fundamental_monthly_snapshot_calculates_four_pillars() -> None
     assert snapshot.capital_action_signal.buyback_bonus == pytest.approx(20)
     assert snapshot.capital_action_signal.dilution_ratio == pytest.approx(0.10)
     assert snapshot.capital_action_signal.dilution_penalty == pytest.approx(20)
+    assert snapshot.capital_action_signal.newly_issued_shares == 10_000_000
+    assert snapshot.capital_action_signal.shares_before_issuance == 100_000_000
+    assert snapshot.inventory_status == "available"
     assert snapshot.floating_market_cap == pytest.approx(1_000_000_000)
     assert snapshot.floating_market_cap_percentile == pytest.approx(200 / 3)
 
@@ -133,6 +136,7 @@ def test_non_positive_earnings_do_not_produce_misleading_valuation_ratios() -> N
             ttm_pretax_profit=-10,
             ttm_revenue=100,
             ttm_cash_dividend=0,
+            inventory_applicable=False,
             annual_earnings=[
                 AnnualEarnings(year=2021, adjusted_eps=-1),
                 AnnualEarnings(year=2025, adjusted_eps=1),
@@ -152,6 +156,7 @@ def test_non_positive_earnings_do_not_produce_misleading_valuation_ratios() -> N
     assert snapshot.lynch_growth_value_label == "not_applicable"
     assert snapshot.price_to_free_cash_flow is None
     assert snapshot.main_business_name is None
+    assert snapshot.inventory_status == "not_applicable"
 
 
 def test_five_year_growth_ignores_older_earnings_history() -> None:
@@ -180,7 +185,19 @@ def test_five_year_growth_ignores_older_earnings_history() -> None:
             AnnualEarnings(year=2024, adjusted_eps=1.728),
             AnnualEarnings(year=2025, adjusted_eps=2.0736),
         ],
-        business_segments=[],
+        business_segments=[
+            BusinessSegment(
+                name="已披露分部利润",
+                revenue=60,
+                cost=30,
+                disclosed_profit=10,
+            ),
+            BusinessSegment(
+                name="缺少分部利润",
+                revenue=40,
+                cost=20,
+            ),
+        ],
         shareholder_actions=ShareholderActions(
             average_floating_market_cap=500,
         ),
@@ -191,3 +208,4 @@ def test_five_year_growth_ignores_older_earnings_history() -> None:
 
     assert snapshot.five_year_adjusted_eps_cagr == pytest.approx(0.20)
     assert snapshot.positive_growth_years == 4
+    assert snapshot.main_business_name is None

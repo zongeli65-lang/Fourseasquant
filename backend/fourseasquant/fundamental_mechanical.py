@@ -15,6 +15,7 @@ GrowthValueLabel = Literal[
     "good",
     "not_applicable",
 ]
+InventoryStatus = Literal["available", "insufficient_data", "not_applicable"]
 
 
 class AnnualEarnings(BaseModel):
@@ -56,6 +57,7 @@ class PersonalFundamentalMonthlyInput(BaseModel):
     ttm_cash_dividend: float = Field(ge=0)
     current_inventory: float | None = Field(default=None, ge=0)
     prior_inventory: float | None = Field(default=None, ge=0)
+    inventory_applicable: bool = True
     current_revenue: float | None = None
     prior_revenue: float | None = None
     annual_earnings: list[AnnualEarnings]
@@ -100,6 +102,7 @@ class PersonalFundamentalMonthlySnapshot(BaseModel):
     dividend_continuously_increased: bool | None
     free_cash_flow_per_share: float
     price_to_free_cash_flow: float | None
+    inventory_status: InventoryStatus
     inventory_growth: float | None
     revenue_growth: float | None
     inventory_growth_minus_revenue_growth: float | None
@@ -125,6 +128,8 @@ class CapitalActionSignal(BaseModel):
     buyback_bonus: float
     dilution_ratio: float
     dilution_penalty: float
+    newly_issued_shares: float
+    shares_before_issuance: float | None
 
 
 def calculate_personal_fundamental_monthly_snapshot(
@@ -132,8 +137,11 @@ def calculate_personal_fundamental_monthly_snapshot(
 ) -> PersonalFundamentalMonthlySnapshot:
     market_cap = source.price * source.total_shares
     floating_market_cap = source.price * source.floating_shares
-    ordinary_pe = _positive_ratio(market_cap, source.ttm_parent_net_profit)
-    adjusted_pe = _positive_ratio(
+    ordinary_pe = _ratio_when_denominator_positive(
+        market_cap,
+        source.ttm_parent_net_profit,
+    )
+    adjusted_pe = _ratio_when_denominator_positive(
         market_cap,
         source.ttm_adjusted_parent_net_profit,
     )
@@ -152,7 +160,7 @@ def calculate_personal_fundamental_monthly_snapshot(
     net_cash_per_share = net_cash / source.total_shares
     cash_adjusted_price = source.price - net_cash_per_share
     cash_adjusted_market_cap = market_cap - net_cash
-    cash_adjusted_pe = _positive_ratio(
+    cash_adjusted_pe = _ratio_when_denominator_positive(
         cash_adjusted_market_cap,
         source.ttm_adjusted_parent_net_profit,
     )
@@ -178,7 +186,9 @@ def calculate_personal_fundamental_monthly_snapshot(
         source.institution_holding_ratio,
         source.prior_institution_holding_ratio,
     )
-    inventory_growth, revenue_growth = _inventory_growth_rates(source)
+    inventory_status, inventory_growth, revenue_growth = (
+        _inventory_growth_result(source)
+    )
     pretax_margin = _ratio_when_denominator_positive(
         source.ttm_pretax_profit,
         source.ttm_revenue,
@@ -191,11 +201,11 @@ def calculate_personal_fundamental_monthly_snapshot(
         as_of_date=source.as_of_date,
         ordinary_pe=ordinary_pe,
         adjusted_pe=adjusted_pe,
-        adjusted_pe_historical_percentile=_percentile(
+        adjusted_pe_historical_percentile=_positive_percentile(
             adjusted_pe,
             source.historical_adjusted_pe,
         ),
-        adjusted_pe_peer_percentile=_percentile(
+        adjusted_pe_peer_percentile=_positive_percentile(
             adjusted_pe,
             source.peer_adjusted_pe,
         ),
@@ -222,7 +232,11 @@ def calculate_personal_fundamental_monthly_snapshot(
             source.annual_cash_dividends
         ),
         free_cash_flow_per_share=free_cash_flow / source.total_shares,
-        price_to_free_cash_flow=_positive_ratio(market_cap, free_cash_flow),
+        price_to_free_cash_flow=_ratio_when_denominator_positive(
+            market_cap,
+            free_cash_flow,
+        ),
+        inventory_status=inventory_status,
         inventory_growth=inventory_growth,
         revenue_growth=revenue_growth,
         inventory_growth_minus_revenue_growth=(
@@ -231,11 +245,11 @@ def calculate_personal_fundamental_monthly_snapshot(
             else None
         ),
         pretax_margin=pretax_margin,
-        pretax_margin_historical_percentile=_percentile(
+        pretax_margin_historical_percentile=_numeric_percentile(
             pretax_margin,
             source.historical_pretax_margins,
         ),
-        pretax_margin_peer_percentile=_percentile(
+        pretax_margin_peer_percentile=_numeric_percentile(
             pretax_margin,
             source.peer_pretax_margins,
         ),
@@ -248,17 +262,11 @@ def calculate_personal_fundamental_monthly_snapshot(
             capital_action_signal
         ),
         floating_market_cap=floating_market_cap,
-        floating_market_cap_percentile=_percentile(
+        floating_market_cap_percentile=_positive_percentile(
             floating_market_cap,
             source.floating_market_cap_universe,
         ),
     )
-
-
-def _positive_ratio(numerator: float, denominator: float) -> float | None:
-    if denominator <= 0:
-        return None
-    return numerator / denominator
 
 
 def _ratio_when_denominator_positive(
@@ -334,9 +342,11 @@ def _dividend_continuously_increased(
     )
 
 
-def _inventory_growth_rates(
+def _inventory_growth_result(
     source: PersonalFundamentalMonthlyInput,
-) -> tuple[float | None, float | None]:
+) -> tuple[InventoryStatus, float | None, float | None]:
+    if not source.inventory_applicable:
+        return "not_applicable", None, None
     current_inventory = source.current_inventory
     prior_inventory = source.prior_inventory
     current_revenue = source.current_revenue
@@ -347,10 +357,11 @@ def _inventory_growth_rates(
         or current_revenue is None
         or prior_revenue is None
     ):
-        return None, None
+        return "insufficient_data", None, None
     if prior_inventory <= 0 or prior_revenue <= 0:
-        return None, None
+        return "insufficient_data", None, None
     return (
+        "available",
         current_inventory / prior_inventory - 1,
         current_revenue / prior_revenue - 1,
     )
@@ -361,9 +372,14 @@ def _main_business(
 ) -> tuple[str | None, float | None]:
     if not segments:
         return None, None
+    any_disclosed_profit = any(
+        segment.disclosed_profit is not None for segment in segments
+    )
     use_disclosed_profit = all(
         segment.disclosed_profit is not None for segment in segments
     )
+    if any_disclosed_profit and not use_disclosed_profit:
+        return None, None
     profits = [
         (
             segment,
@@ -417,6 +433,8 @@ def _capital_action_signal(actions: ShareholderActions) -> CapitalActionSignal:
         buyback_bonus=buyback_bonus,
         dilution_ratio=dilution_ratio,
         dilution_penalty=dilution_penalty,
+        newly_issued_shares=actions.newly_issued_shares,
+        shares_before_issuance=actions.shares_before_issuance,
     )
 
 
@@ -433,8 +451,20 @@ def capital_action_signal_score(signal: CapitalActionSignal) -> float:
     )
 
 
-def _percentile(value: float | None, universe: list[float]) -> float | None:
+def _positive_percentile(
+    value: float | None,
+    universe: list[float],
+) -> float | None:
     valid = [item for item in universe if item > 0]
     if value is None or not valid:
         return None
     return sum(item <= value for item in valid) / len(valid) * 100
+
+
+def _numeric_percentile(
+    value: float | None,
+    universe: list[float],
+) -> float | None:
+    if value is None or not universe:
+        return None
+    return sum(item <= value for item in universe) / len(universe) * 100
