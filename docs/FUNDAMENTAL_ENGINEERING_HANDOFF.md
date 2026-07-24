@@ -16,7 +16,7 @@
 - 财报网址与内容哈希复用；
 - 月度快照只保存变化字段；
 - 单帖引用不保存正文，并自动清理三十天以前的记录；
-- 东方财富行业、概念板块及成分股的完整快照导入；
+- AKShare 新浪行业、概念板块及成分股的完整快照导入；
 - 数据库版本升级到 12。
 
 ## 2. 代码位置
@@ -25,15 +25,15 @@
 |---|---|
 | `backend/fourseasquant/fundamental_mechanical.py` | 月度四支柱计算 |
 | `backend/fourseasquant/discussion_sentiment.py` | 每日讨论分类、热度和平台合并 |
-| `backend/fourseasquant/fundamental_discovery.py` | 东方财富板块与成分股标准化 |
+| `backend/fourseasquant/fundamental_discovery.py` | 东方财富、新浪板块与成分股标准化 |
 | `backend/fourseasquant/fundamental_repository.py` | 证据、变化快照、讨论引用和板块候选快照保存 |
 | `scripts/calculate_fundamental_monthly.py` | 月度结构化输入命令行入口 |
 | `scripts/aggregate_discussion_day.py` | 每日讨论结构化输入命令行入口 |
-| `scripts/import_fundamental_boards.py` | AKShare 东方财富板块实时导入 |
+| `scripts/import_fundamental_boards.py` | AKShare 新浪板块实时导入，并按最新正式行情股票集合过滤 |
 
 ## 3. 调用方法
 
-导入东方财富板块和成分股：
+导入新浪行业、概念板块和成分股：
 
 ```zsh
 npm run data:fundamental-boards
@@ -76,12 +76,11 @@ uv run pytest -q \
 
 - 巨潮财报字段到月度输入模型的实时采集器；
 - 东方财富股吧和雪球逐帖公开内容采集器；
-- 同花顺板块成分股采集器：当前项目 AKShare 1.18.70 只有同花顺板块目录和简介，没有成分股接口；
+- 同花顺板块成分股采集器：当前项目 AKShare 1.18.70 只有同花顺板块目录和简介，没有完整成分股接口；
 - 东方财富与同花顺热门股票榜的统一候选池；
 - 月末定时任务和每日舆情定时任务；
-- 网页展示。
 
-真实东方财富板块抽查在 2026-07-24 被本机当前网络代理断开；本地 AKShare 1.18.70 源码列定义与适配器一致，完整性、字段和保存行为已由测试覆盖，但全量联网导入仍不得宣称已经实测成功。
+真实东方财富板块抽查在 2026-07-24 被本机当前网络代理断开，因此正式初始化改用同属 AKShare 的新浪行业和概念接口。2026-07-24 已实测全量导入 259 个候选板块、14,305 条有效成员关系和 4,972 只唯一股票；所有成员都属于当日 4,978 只正式沪深主板、创业板或科创板股票集合。页面默认读取最新可用候选池来源。
 
 这些缺口不能用模拟数据冒充。下一阶段应优先完成巨潮结构化输入适配器和公开讨论采集器，再接定时任务。
 

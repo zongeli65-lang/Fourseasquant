@@ -159,6 +159,10 @@ type SortField =
 
 const emptyMonthlySeries: MonthlySeries = { code: "", records: [] };
 const emptyDiscussionSeries: DiscussionSeries = { code: "", days: [] };
+const boardSourceLabels: Record<string, string> = {
+  eastmoney: "东方财富",
+  sina: "新浪",
+};
 
 const lynchLabels: Record<MonthlySnapshot["lynch_growth_value_label"], string> = {
   poor: "较差",
@@ -932,7 +936,13 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
               </table>
             </div>
             <footer>
-              <span>来源 · {overviewState.data.board_source ?? "暂无候选池"}</span>
+              <span>
+                来源 ·{" "}
+                {overviewState.data.board_source
+                  ? (boardSourceLabels[overviewState.data.board_source] ??
+                    overviewState.data.board_source)
+                  : "暂无候选池"}
+              </span>
               <span>采集 · {beijingDateTime(overviewState.data.board_collected_at)}</span>
             </footer>
           </aside>

@@ -9,6 +9,7 @@ import pandas as pd
 from fourseasquant.database import initialize_database
 from fourseasquant.fundamental_discovery import (
     collect_eastmoney_board_candidate_snapshot,
+    collect_sina_board_candidate_snapshot,
 )
 from fourseasquant.fundamental_repository import (
     read_latest_board_candidate_snapshot,
@@ -74,6 +75,28 @@ def test_failed_board_fetch_makes_candidate_snapshot_incomplete() -> None:
     assert snapshot.complete is False
     assert snapshot.boards == []
     assert snapshot.errors == ["BK0475: 上游不可用"]
+
+
+def test_sina_catalogs_are_normalized_without_losing_memberships() -> None:
+    snapshot = collect_sina_board_candidate_snapshot(
+        industry_catalog=pd.DataFrame(
+            [{"板块": "半导体", "label": "hangye_ZB91"}]
+        ),
+        concept_catalog=pd.DataFrame([{"板块": "机器人", "label": "gn_jqr"}]),
+        constituent_fetcher=lambda code, kind: pd.DataFrame(
+            [{"代码": "688981" if kind == "industry" else "300024", "名称": code}]
+        ),
+        effective_date=date(2026, 7, 24),
+        max_workers=2,
+    )
+
+    assert snapshot.source == "sina"
+    assert snapshot.complete is True
+    assert [board.board_id for board in snapshot.boards] == [
+        "sina:concept:gn_jqr",
+        "sina:industry:hangye_ZB91",
+    ]
+    assert snapshot.boards[0].members[0].code == "300024"
 
 
 def test_complete_board_candidate_snapshot_is_content_deduplicated(

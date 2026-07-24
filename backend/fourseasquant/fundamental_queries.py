@@ -95,25 +95,28 @@ class FundamentalOverview(BaseModel):
 def read_latest_board_candidate_publication(
     path: Path,
     *,
-    source: str = "eastmoney",
+    source: str | None = None,
     target_date: date | None = None,
 ) -> BoardCandidatePublication | None:
-    date_filter = ""
-    parameters: tuple[object, ...] = (source,)
+    filters: list[str] = []
+    parameters: list[object] = []
+    if source is not None:
+        filters.append("source = ?")
+        parameters.append(source)
     if target_date is not None:
-        date_filter = "AND effective_date <= ?"
-        parameters = (source, target_date.isoformat())
+        filters.append("effective_date <= ?")
+        parameters.append(target_date.isoformat())
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
     with sqlite3.connect(path) as connection:
         row = connection.execute(
             f"""
             SELECT payload_json, collected_at
             FROM fundamental_board_candidate_snapshots
-            WHERE source = ?
-            {date_filter}
+            {where_clause}
             ORDER BY effective_date DESC, collected_at DESC
             LIMIT 1
             """,
-            parameters,
+            tuple(parameters),
         ).fetchone()
     if row is None:
         return None
@@ -127,7 +130,7 @@ def read_board_candidate(
     path: Path,
     board_id: str,
     *,
-    source: str = "eastmoney",
+    source: str | None = None,
     target_date: date | None = None,
 ) -> BoardCandidate | None:
     publication = read_latest_board_candidate_publication(

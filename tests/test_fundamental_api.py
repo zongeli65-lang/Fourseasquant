@@ -271,6 +271,47 @@ def test_fundamental_read_endpoints_expose_only_persisted_snapshots(
     assert future_board_is_hidden.status_code == 404
 
 
+def test_latest_board_endpoint_uses_most_recent_available_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "latest-board-source.db"
+    monkeypatch.setenv("FOURSEASQUANT_DB_PATH", str(database))
+    _seed_fundamentals(database)
+    save_board_candidate_snapshot(
+        database,
+        BoardCandidateSnapshot(
+            source="sina",
+            effective_date=date(2026, 7, 24),
+            complete=True,
+            errors=[],
+            boards=[
+                BoardCandidate(
+                    board_id="sina:industry:hangye_ZA01",
+                    source_board_code="hangye_ZA01",
+                    name="农业",
+                    kind="industry",
+                    members=[
+                        BoardCandidateMember(code="600598", name="北大荒")
+                    ],
+                )
+            ],
+        ),
+        collected_at=datetime(2026, 7, 24, 16, 31, tzinfo=BEIJING),
+    )
+
+    with TestClient(app) as client:
+        latest = client.get("/api/fundamentals/board-candidates/latest")
+        board = client.get(
+            "/api/fundamentals/board-candidates/sina%3Aindustry%3Ahangye_ZA01"
+        )
+
+    assert latest.status_code == 200
+    assert latest.json()["snapshot"]["source"] == "sina"
+    assert board.status_code == 200
+    assert board.json()["name"] == "农业"
+
+
 def test_fundamental_overview_filters_searches_sorts_and_preserves_missing_data(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 
 BoardKind = Literal["industry", "concept"]
+BoardSource = Literal["eastmoney", "sina"]
 
 
 class BoardCandidateMember(BaseModel):
@@ -26,7 +27,7 @@ class BoardCandidate(BaseModel):
 
 
 class BoardCandidateSnapshot(BaseModel):
-    source: Literal["eastmoney"]
+    source: BoardSource
     effective_date: date
     complete: bool
     boards: list[BoardCandidate]
@@ -41,6 +42,56 @@ def collect_eastmoney_board_candidate_snapshot(
     effective_date: date,
     max_workers: int = 4,
 ) -> BoardCandidateSnapshot:
+    def fetch_eastmoney(
+        board_code: str,
+        _board_kind: BoardKind,
+    ) -> pd.DataFrame:
+        return constituent_fetcher(board_code)
+
+    return _collect_board_candidate_snapshot(
+        source="eastmoney",
+        board_id_prefix="em",
+        industry_catalog=industry_catalog,
+        concept_catalog=concept_catalog,
+        constituent_fetcher=fetch_eastmoney,
+        effective_date=effective_date,
+        max_workers=max_workers,
+    )
+
+
+def collect_sina_board_candidate_snapshot(
+    *,
+    industry_catalog: pd.DataFrame,
+    concept_catalog: pd.DataFrame,
+    constituent_fetcher: Callable[[str, BoardKind], pd.DataFrame],
+    effective_date: date,
+    max_workers: int = 4,
+) -> BoardCandidateSnapshot:
+    return _collect_board_candidate_snapshot(
+        source="sina",
+        board_id_prefix="sina",
+        industry_catalog=industry_catalog.rename(
+            columns={"板块": "板块名称", "label": "板块代码"}
+        ),
+        concept_catalog=concept_catalog.rename(
+            columns={"板块": "板块名称", "label": "板块代码"}
+        ),
+        constituent_fetcher=constituent_fetcher,
+        effective_date=effective_date,
+        max_workers=max_workers,
+    )
+
+
+def _collect_board_candidate_snapshot(
+    *,
+    source: BoardSource,
+    board_id_prefix: str,
+    industry_catalog: pd.DataFrame,
+    concept_catalog: pd.DataFrame,
+    constituent_fetcher: Callable[[str, BoardKind], pd.DataFrame],
+    effective_date: date,
+    max_workers: int,
+) -> BoardCandidateSnapshot:
     catalog = [
         *_catalog_rows(industry_catalog, "industry"),
         *_catalog_rows(concept_catalog, "concept"),
@@ -49,7 +100,7 @@ def collect_eastmoney_board_candidate_snapshot(
     errors: list[str] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_board = {
-            executor.submit(constituent_fetcher, board_code): (
+            executor.submit(constituent_fetcher, board_code, board_kind): (
                 board_code,
                 board_name,
                 board_kind,
@@ -65,7 +116,7 @@ def collect_eastmoney_board_candidate_snapshot(
                 continue
             boards.append(
                 BoardCandidate(
-                    board_id=f"em:{board_kind}:{board_code}",
+                    board_id=f"{board_id_prefix}:{board_kind}:{board_code}",
                     source_board_code=board_code,
                     name=board_name,
                     kind=board_kind,
@@ -75,7 +126,7 @@ def collect_eastmoney_board_candidate_snapshot(
     boards.sort(key=lambda board: board.board_id)
     errors.sort()
     return BoardCandidateSnapshot(
-        source="eastmoney",
+        source=source,
         effective_date=effective_date,
         complete=not errors and len(boards) == len(catalog),
         boards=boards,
