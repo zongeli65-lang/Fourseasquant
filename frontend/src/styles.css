@@ -3061,6 +3061,640 @@ h2 {
   }
 }
 
+/* 基本面分析：保持 Swiss Modernism 2.0 的直角、纸张和高对比数据语言。 */
+.fundamentals-page {
+  display: grid;
+  gap: 20px;
+}
+
+.fundamentals-intro,
+.fundamental-controls,
+.fundamental-universe,
+.fundamental-detail,
+.fundamental-page-state {
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: #faf8f3;
+}
+
+.fundamentals-intro {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.2fr) minmax(560px, 1fr);
+  gap: 28px;
+  padding: 28px;
+}
+
+.fundamentals-intro h2 {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: clamp(24px, 2.4vw, 38px);
+  letter-spacing: -0.04em;
+}
+
+.fundamentals-intro > div > p:last-child {
+  max-width: 720px;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.fundamentals-intro dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border: 1px solid #c8beb0;
+  background: #fffdf8;
+}
+
+.fundamentals-intro dl > div {
+  min-width: 0;
+  padding: 18px 16px;
+  border-right: 1px solid #c8beb0;
+}
+
+.fundamentals-intro dl > div:last-child {
+  border-right: 0;
+}
+
+.fundamentals-intro dt,
+.fundamental-detail__dates span,
+.fundamental-primary-business span {
+  margin-bottom: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.fundamentals-intro dd,
+.fundamental-detail__dates strong {
+  margin: 0;
+  color: var(--text);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 13px;
+}
+
+.fundamental-controls {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.2fr) minmax(320px, 1fr) minmax(220px, 0.8fr) 88px;
+  align-items: end;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.fundamental-controls label,
+.fundamental-controls form {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fundamental-controls form > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+
+.fundamental-controls input,
+.fundamental-controls select,
+.fundamental-controls button {
+  min-height: 42px;
+  border: 1px solid #8f8578;
+  border-radius: 0;
+  color: var(--text);
+  background: #fffdf8;
+}
+
+.fundamental-controls input,
+.fundamental-controls select {
+  width: 100%;
+  padding: 9px 11px;
+}
+
+.fundamental-controls button {
+  padding: 9px 16px;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.fundamental-controls form button,
+.fundamental-sort-order:hover {
+  border-color: var(--brand);
+  color: #fff;
+  background: var(--brand);
+}
+
+.fundamental-sort-order {
+  width: 100%;
+}
+
+.fundamental-page-state {
+  min-height: 260px;
+  padding: 48px;
+  color: var(--text-muted);
+  line-height: 1.65;
+  text-align: center;
+}
+
+.fundamental-page-state h2 {
+  color: var(--text);
+  font-size: 22px;
+}
+
+.fundamental-page-state--error,
+.fundamental-inline-error {
+  color: #8a2832;
+  background: #f7e4e1;
+}
+
+.fundamental-workspace {
+  display: grid;
+  grid-template-columns: minmax(500px, 0.82fr) minmax(620px, 1.18fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.fundamental-universe {
+  position: sticky;
+  top: 20px;
+  overflow: hidden;
+}
+
+.fundamental-universe > header,
+.fundamental-detail__title,
+.fundamental-history > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.fundamental-universe > header {
+  padding: 20px;
+  border-bottom: 1px solid #c8beb0;
+}
+
+.fundamental-universe > header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.fundamental-universe > header > span,
+.fundamental-history > header > span {
+  padding: 6px 9px;
+  border: 1px solid #9f9588;
+  color: var(--text-muted);
+  background: #ede7dd;
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 11px;
+}
+
+.fundamental-universe__table,
+.fundamental-table-wrap {
+  overflow: auto;
+}
+
+.fundamental-universe__table {
+  max-height: 690px;
+}
+
+.fundamental-universe table,
+.fundamental-history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.fundamental-universe th,
+.fundamental-universe td,
+.fundamental-history th,
+.fundamental-history td {
+  padding: 11px 10px;
+  border-bottom: 1px solid #ddd5c9;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.fundamental-universe th,
+.fundamental-history th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: #3e403a;
+  background: #e7e0d4;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.fundamental-universe tbody tr:hover,
+.fundamental-universe tbody tr.is-selected {
+  background: #edf2ed;
+}
+
+.fundamental-universe tbody tr.is-selected {
+  box-shadow: inset 4px 0 0 var(--brand);
+}
+
+.fundamental-universe td button {
+  display: grid;
+  min-width: 112px;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.fundamental-universe td button strong {
+  font-size: 12px;
+}
+
+.fundamental-universe td button span {
+  color: var(--text-muted);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 10px;
+}
+
+.fundamental-data-status {
+  display: inline-block;
+  min-width: 82px;
+  padding: 4px 6px;
+  border: 1px solid #a69d91;
+  color: #5e574d;
+  background: #f0ebe2;
+  line-height: 1.35;
+}
+
+.fundamental-data-status--complete {
+  border-color: rgba(47, 125, 116, 0.44);
+  color: #145e55;
+  background: rgba(47, 125, 116, 0.1);
+}
+
+.fundamental-data-status--partial {
+  border-color: rgba(165, 107, 23, 0.45);
+  color: #765018;
+  background: rgba(165, 107, 23, 0.1);
+}
+
+.fundamental-universe > footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-top: 1px solid #c8beb0;
+  color: var(--text-muted);
+  background: #ede7dd;
+  font-size: 10px;
+}
+
+.fundamental-detail {
+  min-width: 0;
+  padding: 24px;
+}
+
+.fundamental-detail__title {
+  padding-bottom: 22px;
+  border-bottom: 1px solid #bdb3a4;
+}
+
+.fundamental-detail__title h2 {
+  margin-bottom: 7px;
+  font-size: 25px;
+  letter-spacing: -0.035em;
+}
+
+.fundamental-detail__title h2 span {
+  margin-left: 7px;
+  color: var(--text-muted);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.fundamental-detail__title p:last-child {
+  max-width: 620px;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.fundamental-detail__dates {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 14px;
+  min-width: 220px;
+  padding: 13px;
+  border: 1px solid #c8beb0;
+  background: #fffdf8;
+}
+
+.fundamental-detail-empty {
+  margin-top: 20px;
+  padding: 32px;
+  border: 1px solid #c8beb0;
+  background: #fffdf8;
+}
+
+.fundamental-detail-empty p {
+  max-width: 680px;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.fundamental-pillar,
+.fundamental-history {
+  margin-top: 20px;
+  border: 1px solid #c8beb0;
+  background: #fffdf8;
+}
+
+.fundamental-pillar__header {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #c8beb0;
+  background: #ede7dd;
+}
+
+.fundamental-pillar__header > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid var(--brand);
+  color: var(--brand-bright);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.fundamental-pillar__header h3,
+.fundamental-history h3 {
+  margin: 0 0 5px;
+  font-size: 16px;
+}
+
+.fundamental-pillar__header p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.fundamental-metric-grid,
+.fundamental-market-cap,
+.discussion-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid #c8beb0;
+}
+
+.fundamental-metric,
+.fundamental-primary-business > div {
+  min-width: 0;
+  min-height: 102px;
+  padding: 15px;
+  border-right: 1px solid #ddd5c9;
+  border-bottom: 1px solid #ddd5c9;
+}
+
+.fundamental-metric span {
+  display: block;
+  margin-bottom: 11px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.fundamental-metric strong,
+.fundamental-primary-business strong {
+  display: block;
+  color: var(--text);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 18px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.fundamental-metric small {
+  display: block;
+  margin-top: 7px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.fundamental-evidence-grid,
+.discussion-platform-grid,
+.fundamental-discussion-only {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 16px;
+}
+
+.fundamental-evidence-grid article,
+.discussion-platform {
+  border: 1px solid #c8beb0;
+  background: #faf8f3;
+}
+
+.fundamental-evidence-grid h4,
+.discussion-platform h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.fundamental-evidence-grid h4 {
+  padding: 13px 15px;
+  border-bottom: 1px solid #ddd5c9;
+}
+
+.fundamental-evidence-grid dl,
+.discussion-platform dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.fundamental-evidence-grid dl > div,
+.discussion-platform dl > div {
+  padding: 11px 14px;
+  border-right: 1px solid #ddd5c9;
+  border-bottom: 1px solid #ddd5c9;
+}
+
+.fundamental-evidence-grid dt,
+.discussion-platform dt {
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.fundamental-evidence-grid dd,
+.discussion-platform dd {
+  margin: 0;
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 11px;
+}
+
+.fundamental-primary-business {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.fundamental-primary-business > div {
+  min-height: 110px;
+}
+
+.fundamental-primary-business > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 14px 16px;
+  color: var(--text-muted);
+  background: #f3eee5;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.fundamental-market-cap,
+.discussion-summary {
+  border-bottom: 0;
+}
+
+.discussion-platform > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 15px;
+  border-bottom: 1px solid #ddd5c9;
+}
+
+.discussion-platform > header span {
+  color: var(--text-muted);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 10px;
+}
+
+.discussion-platform--empty {
+  min-height: 160px;
+  padding: 18px;
+  color: var(--text-muted);
+}
+
+.discussion-platform--empty strong {
+  display: block;
+  margin: 24px 0 6px;
+  color: var(--text);
+}
+
+.discussion-platform--empty p {
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.fundamental-note {
+  margin: 0;
+  padding: 10px 14px;
+  color: var(--text-muted);
+  background: #f3eee5;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.discussion-trend {
+  margin: 0 16px 16px;
+  padding: 16px;
+  border: 1px solid #c8beb0;
+  background: #faf8f3;
+}
+
+.discussion-trend__plot {
+  display: flex;
+  min-height: 74px;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid #bdb3a4;
+}
+
+.discussion-trend__bar {
+  flex: 1;
+  min-width: 3px;
+  max-width: 22px;
+  border: 1px solid currentColor;
+  background: currentColor;
+}
+
+.discussion-trend__bar--positive {
+  color: #b6323c;
+}
+
+.discussion-trend__bar--negative {
+  color: #27815d;
+}
+
+.discussion-trend__bar--neutral {
+  color: #9c8158;
+}
+
+.discussion-trend__bar--missing {
+  color: #c9c0b4;
+}
+
+.discussion-trend__legend {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 8px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.fundamental-inline-empty,
+.fundamental-inline-error {
+  margin: 16px;
+  padding: 14px;
+  border: 1px solid #c8beb0;
+  font-size: 11px;
+}
+
+.fundamental-history {
+  padding: 18px;
+}
+
+.fundamental-history > header {
+  margin-bottom: 14px;
+}
+
+.fundamental-history td a {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--brand-bright);
+  font-weight: 700;
+}
+
+@media (max-width: 1500px) {
+  .fundamentals-intro {
+    grid-template-columns: 1fr;
+  }
+
+  .fundamental-workspace {
+    grid-template-columns: minmax(460px, 0.78fr) minmax(580px, 1.22fr);
+  }
+
+  .fundamental-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 /* 明亮米黄色主题：保留数据语义与结构，仅重塑视觉层级。 */
 
 .loading-shell {

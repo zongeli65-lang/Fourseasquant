@@ -53,6 +53,24 @@ from fourseasquant.database import (
     initialize_database,
     snapshot_exists,
 )
+from fourseasquant.fundamental_discovery import BoardCandidate
+from fourseasquant.fundamental_queries import (
+    BoardCandidatePublication,
+    DiscussionDayView,
+    DiscussionSeries,
+    FundamentalOverview,
+    MonthlyFundamentalRecord,
+    MonthlyFundamentalSeries,
+    OverviewSortField,
+    SortOrder,
+    read_board_candidate,
+    read_discussion_series,
+    read_fundamental_overview,
+    read_latest_board_candidate_publication,
+    read_latest_discussion,
+    read_latest_monthly_fundamental,
+    read_monthly_fundamental_series,
+)
 from fourseasquant.review_notes import (
     ReviewResponse,
     ReviewWriteRequest,
@@ -289,6 +307,152 @@ def sector_membership_contract() -> dict[str, object]:
     return membership_json_schema()
 
 
+@app.get(
+    "/api/fundamentals/board-candidates/latest",
+    response_model=BoardCandidatePublication,
+)
+def latest_fundamental_board_candidates(
+    target_date: date | None = None,
+) -> BoardCandidatePublication:
+    publication = read_latest_board_candidate_publication(
+        database_path(),
+        target_date=target_date,
+    )
+    if publication is None:
+        raise HTTPException(status_code=404, detail="尚无完整板块候选池快照")
+    return publication
+
+
+@app.get(
+    "/api/fundamentals/board-candidates/{board_code}",
+    response_model=BoardCandidate,
+)
+def fundamental_board_candidate(
+    board_code: str,
+    target_date: date | None = None,
+) -> BoardCandidate:
+    board = read_board_candidate(
+        database_path(),
+        board_code,
+        target_date=target_date,
+    )
+    if board is None:
+        raise HTTPException(status_code=404, detail="未找到候选板块")
+    return board
+
+
+@app.get(
+    "/api/fundamentals/securities/{symbol}/monthly/latest",
+    response_model=MonthlyFundamentalRecord,
+)
+def latest_monthly_fundamental(
+    symbol: str,
+    target_date: date | None = None,
+) -> MonthlyFundamentalRecord:
+    try:
+        record = read_latest_monthly_fundamental(
+            database_path(),
+            symbol,
+            target_date=target_date,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if record is None:
+        raise HTTPException(status_code=404, detail="该股票尚无月度基本面快照")
+    return record
+
+
+@app.get(
+    "/api/fundamentals/securities/{symbol}/monthly",
+    response_model=MonthlyFundamentalSeries,
+)
+def monthly_fundamental_history(
+    symbol: str,
+    target_date: date | None = None,
+    limit: int = Query(default=12, ge=1, le=120),
+) -> MonthlyFundamentalSeries:
+    try:
+        return read_monthly_fundamental_series(
+            database_path(),
+            symbol,
+            target_date=target_date,
+            limit=limit,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get(
+    "/api/fundamentals/securities/{symbol}/discussion/latest",
+    response_model=DiscussionDayView,
+)
+def latest_fundamental_discussion(
+    symbol: str,
+    target_date: date | None = None,
+) -> DiscussionDayView:
+    try:
+        result = read_latest_discussion(
+            database_path(),
+            symbol,
+            target_date=target_date,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if result is None:
+        raise HTTPException(status_code=404, detail="该股票尚无每日舆情快照")
+    return result
+
+
+@app.get(
+    "/api/fundamentals/securities/{symbol}/discussion",
+    response_model=DiscussionSeries,
+)
+def fundamental_discussion_history(
+    symbol: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int = Query(default=30, ge=1, le=365),
+) -> DiscussionSeries:
+    try:
+        return read_discussion_series(
+            database_path(),
+            symbol,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get(
+    "/api/fundamentals/overview",
+    response_model=FundamentalOverview,
+)
+def fundamental_overview(
+    target_date: date | None = None,
+    board_code: str | None = None,
+    search: str = Query(default="", max_length=40),
+    sort_by: OverviewSortField = "code",
+    sort_order: SortOrder = "asc",
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> FundamentalOverview:
+    try:
+        return read_fundamental_overview(
+            database_path(),
+            target_date=target_date,
+            board_id=board_code,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)
 def run_daily_task(request: DailyTaskRequest) -> TaskRunResponse:
     if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
@@ -399,6 +563,7 @@ if FRONTEND_DISTRIBUTION.is_dir():
         "/market",
         "/quotes",
         "/strategy",
+        "/fundamentals",
         "/tasks",
     ):
         app.add_api_route(

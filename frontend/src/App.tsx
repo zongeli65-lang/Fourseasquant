@@ -19,6 +19,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { RealMarketDashboard } from "./RealMarketDashboard";
 import { KlineExplorer, type InstrumentSelection } from "./KlineExplorer";
 import { TechnicalLeadershipPanel } from "./TechnicalLeadershipPanel";
+import { FundamentalsPage } from "./FundamentalsPage";
 import { movementTone, signedPercentage } from "./marketFormatting";
 
 type HealthStatus = {
@@ -111,9 +112,16 @@ const pages: PageDefinition[] = [
     description: "策略净值、组合明细与独立量价技术证据。",
   },
   {
+    path: "/fundamentals",
+    label: "基本面",
+    shortLabel: "05",
+    title: "个人基本面分析",
+    description: "候选板块、月度四支柱与每日讨论热度。",
+  },
+  {
     path: "/tasks",
     label: "任务",
-    shortLabel: "05",
+    shortLabel: "06",
     title: "任务中心",
     description: "运行目标日期任务、查看失败状态与历史记录。",
   },
@@ -626,6 +634,10 @@ export function App() {
                   )}
                 </>
               }
+            />
+            <Route
+              path="/fundamentals"
+              element={<FundamentalsPage targetDate={targetDate} />}
             />
             <Route
               path="/tasks"

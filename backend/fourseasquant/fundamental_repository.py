@@ -72,6 +72,12 @@ def create_fundamental_tables(connection: sqlite3.Connection) -> None:
     )
     connection.execute(
         """
+        CREATE INDEX IF NOT EXISTS idx_personal_fundamental_monthly_date_code
+        ON personal_fundamental_monthly_snapshots (as_of_date DESC, code)
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS discussion_daily_aggregates (
             platform TEXT NOT NULL,
             actual_date TEXT NOT NULL,
@@ -114,6 +120,18 @@ def create_fundamental_tables(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             PRIMARY KEY (actual_date, code)
         )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discussion_daily_code_date
+        ON discussion_daily_aggregates (code, actual_date DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discussion_combined_code_date
+        ON discussion_daily_combined_signals (code, actual_date DESC)
         """
     )
     connection.execute(
