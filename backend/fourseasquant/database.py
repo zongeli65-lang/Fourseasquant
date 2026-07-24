@@ -9,6 +9,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import cast
 
+from fourseasquant.fundamental_repository import create_fundamental_tables
+
 
 @dataclass(frozen=True)
 class SnapshotRow:
@@ -456,10 +458,11 @@ def initialize_database(path: Path) -> None:
             ) VALUES (1, '16:30', '沪深 300', 'simulation', 60)
             """
         )
+        create_fundamental_tables(connection)
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '11')
+            VALUES ('schema_version', '12')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -476,7 +479,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("11",)
+    return row == ("12",)
 
 
 def save_historical_market_summary(

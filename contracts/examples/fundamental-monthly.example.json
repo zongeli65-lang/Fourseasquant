@@ -1,0 +1,53 @@
+{
+  "source_urls": [
+    "https://www.cninfo.com.cn/example-report"
+  ],
+  "code": "600000",
+  "as_of_date": "2026-06-30",
+  "price": 20.0,
+  "total_shares": 100000000,
+  "floating_shares": 50000000,
+  "ttm_parent_net_profit": 250000000,
+  "ttm_adjusted_parent_net_profit": 200000000,
+  "cash_and_equivalents": 500000000,
+  "short_term_interest_bearing_debt": 100000000,
+  "long_term_interest_bearing_debt": 100000000,
+  "parent_equity": 1000000000,
+  "ttm_operating_cash_flow": 300000000,
+  "ttm_capital_expenditure": 100000000,
+  "ttm_pretax_profit": 150000000,
+  "ttm_revenue": 1300000000,
+  "ttm_cash_dividend": 40000000,
+  "current_inventory": 120000000,
+  "prior_inventory": 100000000,
+  "current_revenue": 1300000000,
+  "prior_revenue": 1000000000,
+  "annual_earnings": [
+    {"year": 2021, "adjusted_eps": 1.0},
+    {"year": 2022, "adjusted_eps": 1.2},
+    {"year": 2023, "adjusted_eps": 1.44},
+    {"year": 2024, "adjusted_eps": 1.728},
+    {"year": 2025, "adjusted_eps": 2.0736}
+  ],
+  "annual_cash_dividends": [10, 12, 15, 18, 20],
+  "historical_adjusted_pe": [8, 9, 11, 12],
+  "peer_adjusted_pe": [7, 10, 13],
+  "business_segments": [
+    {"name": "业务甲", "revenue": 600, "cost": 300},
+    {"name": "业务乙", "revenue": 800, "cost": 600}
+  ],
+  "institution_holding_ratio": 0.12,
+  "prior_institution_holding_ratio": 0.10,
+  "shareholder_actions": {
+    "average_floating_market_cap": 1000000000,
+    "insider_net_purchase_amount": 3000000,
+    "cancelled_buyback_amount": 10000000,
+    "newly_issued_shares": 10000000,
+    "shares_before_issuance": 100000000
+  },
+  "floating_market_cap_universe": [
+    500000000,
+    1000000000,
+    2000000000
+  ]
+}
