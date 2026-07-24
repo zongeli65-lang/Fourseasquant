@@ -84,6 +84,7 @@ def refresh_one_year_candles(
     except CandleRefreshError:
         _revoke_candle_publication(path, requested_end_date)
         raise
+    _revoke_candle_publication(path, requested_end_date)
     if security_daily_fact_snapshot is not None:
         coverage_snapshot = security_daily_fact_snapshot()
     elif requested_end_date == datetime.now(ZoneInfo("Asia/Shanghai")).date():
@@ -97,9 +98,9 @@ def refresh_one_year_candles(
         raw_range_start=raw.range_start,
         qfq_range_start=adjusted.range_start,
         qfq_source=qfq_source,
+        new_stock_exclusion_days=settings.new_stock_exclusion_days,
         snapshot=coverage_snapshot,
     )
-    _revoke_candle_publication(path, requested_end_date)
     import_index_candles(
         path,
         requested_end_date=requested_end_date,
@@ -155,6 +156,7 @@ def _validate_security_daily_fact_coverage(
     raw_range_start: date,
     qfq_range_start: date,
     qfq_source: str,
+    new_stock_exclusion_days: int,
     snapshot: pd.DataFrame,
 ) -> None:
     if snapshot.empty or "代码" not in snapshot.columns or "成交量" not in snapshot.columns:
@@ -172,17 +174,11 @@ def _validate_security_daily_fact_coverage(
     active_codes = set(frame.loc[frame["成交量"] > 0, "代码"].tolist())
     target = requested_end_date.isoformat()
     with sqlite3.connect(path) as connection:
-        previously_eligible = {
-            str(row[0])
-            for row in connection.execute(
-                """
-                SELECT DISTINCT code
-                FROM historical_security_facts
-                WHERE source = ? AND actual_data_date < ?
-                """,
-                (HISTORY_SOURCE, target),
-            )
-        }
+        previously_eligible = _eligible_prior_codes(
+            connection,
+            target=target,
+            new_stock_exclusion_days=new_stock_exclusion_days,
+        )
         raw_codes = _codes_for_source_date(connection, HISTORY_SOURCE, target)
         qfq_codes = _codes_for_source_date(connection, qfq_source, target)
     expected_codes = active_codes & previously_eligible
@@ -191,23 +187,53 @@ def _validate_security_daily_fact_coverage(
     missing_raw = expected_codes - raw_codes
     missing_qfq = expected_codes - qfq_codes
     if missing_raw or missing_qfq:
-        _invalidate_incomplete_symbols(
+        _invalidate_incomplete_target(
             path,
-            source=HISTORY_SOURCE,
-            range_start=raw_range_start,
-            range_end=requested_end_date,
-            codes=missing_raw,
-        )
-        _invalidate_incomplete_symbols(
-            path,
-            source=qfq_source,
-            range_start=qfq_range_start,
-            range_end=requested_end_date,
-            codes=missing_qfq,
+            target_date=requested_end_date,
+            raw_range_start=raw_range_start,
+            qfq_range_start=qfq_range_start,
+            qfq_source=qfq_source,
+            missing_raw=missing_raw,
+            missing_qfq=missing_qfq,
         )
         missing_codes = "、".join(sorted(missing_raw | missing_qfq)[:10])
-        _revoke_candle_publication(path, requested_end_date)
         raise CandleRefreshError(f"目标交易日个股日频事实缺失：{missing_codes}")
+
+
+def _eligible_prior_codes(
+    connection: sqlite3.Connection,
+    *,
+    target: str,
+    new_stock_exclusion_days: int,
+) -> set[str]:
+    benchmark_dates = [
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT actual_data_date
+            FROM historical_benchmark_facts
+            WHERE source = ? AND actual_data_date <= ?
+            """,
+            (HISTORY_SOURCE, target),
+        )
+    ]
+    eligible: set[str] = set()
+    for code, last_date, listing_days in connection.execute(
+        """
+        SELECT code, MAX(actual_data_date), MAX(listing_trading_days)
+        FROM historical_security_facts
+        WHERE source = ? AND actual_data_date < ?
+        GROUP BY code
+        """,
+        (HISTORY_SOURCE, target),
+    ):
+        projected_listing_days = int(listing_days) + sum(
+            str(last_date) < trading_date <= target
+            for trading_date in benchmark_dates
+        )
+        if projected_listing_days >= new_stock_exclusion_days:
+            eligible.add(str(code))
+    return eligible
 
 
 def _codes_for_source_date(
@@ -227,31 +253,42 @@ def _codes_for_source_date(
     }
 
 
-def _invalidate_incomplete_symbols(
+def _invalidate_incomplete_target(
     path: Path,
     *,
-    source: str,
-    range_start: date,
-    range_end: date,
-    codes: set[str],
+    target_date: date,
+    raw_range_start: date,
+    qfq_range_start: date,
+    qfq_source: str,
+    missing_raw: set[str],
+    missing_qfq: set[str],
 ) -> None:
-    if not codes:
-        return
     with sqlite3.connect(path) as connection:
-        connection.executemany(
+        for source, range_start, codes in (
+            (HISTORY_SOURCE, raw_range_start, missing_raw),
+            (qfq_source, qfq_range_start, missing_qfq),
+        ):
+            connection.executemany(
+                """
+                DELETE FROM history_ingestion_progress
+                WHERE source = ? AND range_start = ? AND range_end = ? AND code = ?
+                """,
+                [
+                    (
+                        source,
+                        range_start.isoformat(),
+                        target_date.isoformat(),
+                        code,
+                    )
+                    for code in sorted(codes)
+                ],
+            )
+        connection.execute(
             """
-            DELETE FROM history_ingestion_progress
-            WHERE source = ? AND range_start = ? AND range_end = ? AND code = ?
+            DELETE FROM candle_dataset_publications
+            WHERE actual_data_date = ?
             """,
-            [
-                (
-                    source,
-                    range_start.isoformat(),
-                    range_end.isoformat(),
-                    code,
-                )
-                for code in sorted(codes)
-            ],
+            (target_date.isoformat(),),
         )
 
 

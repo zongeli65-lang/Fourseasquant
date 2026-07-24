@@ -215,3 +215,97 @@ def test_historical_refresh_requires_target_day_coverage_evidence(
             database,
             requested_end_date=date(2026, 7, 23),
         )
+
+
+def test_refresh_revokes_existing_publication_when_coverage_snapshot_is_unusable(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "unusable-coverage.db"
+    initialize_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO candle_dataset_publications (
+                actual_data_date, qfq_source, published_at
+            ) VALUES ('2026-07-24', 'akshare_sina_daily_qfq:2026-07-24', 'old')
+            """
+        )
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "build_akshare_one_year_history_importer",
+        lambda **_: _CompletedImporter(date(2026, 7, 24)),
+    )
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "build_akshare_qfq_history_importer",
+        lambda **_: _CompletedImporter(date(2026, 7, 24)),
+    )
+
+    with pytest.raises(CandleRefreshError, match="覆盖校验数据不可用"):
+        refresh_one_year_candles(
+            database,
+            requested_end_date=date(2026, 7, 24),
+            security_daily_fact_snapshot=pd.DataFrame,
+        )
+
+    with sqlite3.connect(database) as connection:
+        publication = connection.execute(
+            """
+            SELECT 1 FROM candle_dataset_publications
+            WHERE actual_data_date = '2026-07-24'
+            """
+        ).fetchone()
+    assert publication is None
+
+
+def test_coverage_ignores_stocks_still_inside_new_stock_exclusion_window(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "new-stock-window.db"
+    initialize_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.executemany(
+            """
+            INSERT INTO historical_benchmark_facts (
+                source, actual_data_date, name, open, high, low, close, volume
+            ) VALUES ('akshare_sina_daily', ?, '沪深300', 1, 1, 1, 1, 1)
+            """,
+            [("2026-07-23",), ("2026-07-24",)],
+        )
+        connection.executemany(
+            """
+            INSERT INTO historical_security_facts (
+                source, actual_data_date, code, name, open, high, low, close,
+                previous_close, change_pct, volume, turnover_cny,
+                listing_trading_days
+            ) VALUES (?, ?, ?, ?, 10, 11, 9, 10, 10, 0, 100, 1000, ?)
+            """,
+            [
+                ("akshare_sina_daily", "2026-07-22", "001237", "惠康科技", 43),
+                ("akshare_sina_daily", "2026-07-23", "600000", "浦发银行", 100),
+                ("akshare_sina_daily", "2026-07-24", "600000", "浦发银行", 101),
+                (
+                    "akshare_sina_daily_qfq:2026-07-24",
+                    "2026-07-24",
+                    "600000",
+                    "浦发银行",
+                    101,
+                ),
+            ],
+        )
+
+    candle_refresh_module._validate_security_daily_fact_coverage(
+        database,
+        requested_end_date=date(2026, 7, 24),
+        raw_range_start=date(2025, 7, 24),
+        qfq_range_start=date(2025, 7, 24),
+        qfq_source="akshare_sina_daily_qfq:2026-07-24",
+        new_stock_exclusion_days=60,
+        snapshot=pd.DataFrame(
+            [
+                {"代码": "001237", "名称": "惠康科技", "成交量": 100},
+                {"代码": "600000", "名称": "浦发银行", "成交量": 100},
+            ]
+        ),
+    )
