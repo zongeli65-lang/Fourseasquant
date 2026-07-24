@@ -85,35 +85,35 @@ const pages: PageDefinition[] = [
   {
     path: "/overview",
     label: "总览",
-    shortLabel: "总",
+    shortLabel: "01",
     title: "收盘后的全局视图",
     description: "把市场、策略、技术评分与任务状态放在同一条时间线上。",
   },
   {
     path: "/market",
     label: "市场",
-    shortLabel: "市",
+    shortLabel: "02",
     title: "市场概览",
     description: "指数、广度、排行榜与成交额热力图。",
   },
   {
     path: "/quotes",
     label: "行情",
-    shortLabel: "行",
+    shortLabel: "03",
     title: "行情浏览",
     description: "查看规则范围内股票与指数的日 K、成交量和 RSI。",
   },
   {
     path: "/strategy",
     label: "策略",
-    shortLabel: "策",
+    shortLabel: "04",
     title: "策略与技术评分",
     description: "策略净值、组合明细与独立量价技术证据。",
   },
   {
     path: "/tasks",
     label: "任务",
-    shortLabel: "任",
+    shortLabel: "05",
     title: "任务中心",
     description: "运行目标日期任务、查看失败状态与历史记录。",
   },
@@ -463,7 +463,9 @@ export function App() {
       <main className="app-main" id="main-content">
         <header className="page-topbar">
           <div>
-            <p className="page-context">Fourseasquant / {currentPage.label}</p>
+            <p className="page-context">
+              {currentPage.shortLabel} — Fourseasquant / {currentPage.label}
+            </p>
             <h2>{currentPage.title}</h2>
             <p>{currentPage.description}</p>
           </div>
@@ -509,6 +511,9 @@ export function App() {
                           "运行目标日期任务后，这里会连接市场、策略与技术证据。"}
                       </p>
                     </div>
+                    <span className="overview-hero__index" aria-hidden="true">
+                      01
+                    </span>
                     <div className="overview-hero__signal" aria-hidden="true">
                       <span />
                       <span />
