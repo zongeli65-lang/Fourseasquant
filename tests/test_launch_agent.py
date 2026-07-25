@@ -44,7 +44,7 @@ def test_launch_agent_uses_periodic_unified_entrypoint(
     assert definition["ProgramArguments"] == [
         "/example/python",
         "-m",
-        "fourseasquant.automation",
+        "fourseasquant.scheduled_pipeline",
         "run-scheduled",
     ]
     assert definition["EnvironmentVariables"]["FOURSEASQUANT_DB_PATH"] == str(

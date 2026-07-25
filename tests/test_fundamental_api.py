@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 
+import fourseasquant.main as main_module
 from fourseasquant.database import initialize_database
 from fourseasquant.discussion_sentiment import (
     DiscussionPost,
@@ -18,15 +19,24 @@ from fourseasquant.fundamental_discovery import (
     BoardCandidateMember,
     BoardCandidateSnapshot,
 )
+from fourseasquant.fundamental_capital_actions import (
+    CapitalActionEvent,
+    CapitalActionEventType,
+    CapitalActionSnapshot,
+)
 from fourseasquant.fundamental_mechanical import (
     CapitalActionSignal,
     PersonalFundamentalMonthlySnapshot,
 )
+from fourseasquant.fundamental_automation import FundamentalAutomationOutcome
 from fourseasquant.fundamental_repository import (
+    FundamentalUpdateAttempt,
     save_board_candidate_snapshot,
+    save_capital_action_snapshot,
     save_combined_discussion_signal,
     save_discussion_day,
     save_personal_fundamental_monthly_snapshot,
+    save_fundamental_update_attempt,
 )
 from fourseasquant.main import app
 
@@ -144,6 +154,65 @@ def _seed_fundamentals(database: Path) -> None:
         source_urls=["https://www.cninfo.com.cn/report-2"],
         created_at=datetime(2026, 7, 31, 16, 30, tzinfo=BEIJING),
     )
+    legacy = second.model_copy(
+        update={
+            "as_of_date": date(2026, 8, 31),
+            "rules_version": "personal-fundamental-v0",
+            "adjusted_pe": 99,
+        }
+    )
+    save_personal_fundamental_monthly_snapshot(
+        database,
+        legacy,
+        source_urls=["https://www.cninfo.com.cn/legacy"],
+        created_at=datetime(2026, 8, 31, 16, 30, tzinfo=BEIJING),
+    )
+    legacy_only = _monthly_snapshot(
+        "900001",
+        date(2026, 6, 30),
+    ).model_copy(update={"rules_version": "personal-fundamental-v0"})
+    save_personal_fundamental_monthly_snapshot(
+        database,
+        legacy_only,
+        source_urls=["https://www.cninfo.com.cn/legacy-only"],
+        created_at=datetime(2026, 7, 31, 16, 30, tzinfo=BEIJING),
+    )
+    digest = "c" * 64
+    save_capital_action_snapshot(
+        database,
+        CapitalActionSnapshot(
+            as_of_date=date(2026, 7, 24),
+            expected_codes=["600000"],
+            completed_codes=["600000"],
+            errors={},
+            events=[
+                CapitalActionEvent(
+                    event_key=digest,
+                    code="600000",
+                    name="浦发银行",
+                    event_type=CapitalActionEventType.insider_buy,
+                    announcement_at=datetime(
+                        2026,
+                        7,
+                        20,
+                        tzinfo=BEIJING,
+                    ),
+                    effective_date=date(2026, 7, 19),
+                    shares=10_000,
+                    amount_cny=125_000,
+                    price_cny=12.5,
+                    reason="竞价交易",
+                    confirmed_for_score=True,
+                    source_name="巨潮资讯",
+                    source_url="https://www.cninfo.com.cn/capital-1",
+                    source_record_id=digest,
+                    content_sha256=digest,
+                    collected_at=collected_at,
+                )
+            ],
+        ),
+        collected_at=collected_at,
+    )
 
     discussion_time = datetime(2026, 7, 24, 10, tzinfo=BEIJING)
     eastmoney_post = DiscussionPost(
@@ -246,6 +315,14 @@ def test_fundamental_read_endpoints_expose_only_persisted_snapshots(
             "/api/fundamentals/board-candidates/latest",
             params={"target_date": "2026-07-23"},
         )
+        capital_actions = client.get(
+            "/api/fundamentals/securities/600000/capital-actions",
+            params={"target_date": "2026-07-24"},
+        )
+        capital_status = client.get(
+            "/api/fundamentals/capital-actions/status",
+            params={"target_date": "2026-07-24"},
+        )
 
     assert boards.status_code == 200
     assert boards.json()["snapshot"]["effective_date"] == "2026-07-24"
@@ -269,6 +346,13 @@ def test_fundamental_read_endpoints_expose_only_persisted_snapshots(
     assert discussion.json()["combined"] is not None
     assert discussion.json()["eastmoney_reference_count"] == 1
     assert future_board_is_hidden.status_code == 404
+    assert capital_actions.status_code == 200
+    assert capital_actions.json()["as_of_date"] == "2026-07-24"
+    assert capital_actions.json()["events"][0]["amount_cny"] == 125_000
+    assert capital_status.status_code == 200
+    assert capital_status.json()["status"] == "ready"
+    assert capital_status.json()["expected_count"] == 1
+    assert capital_status.json()["confirmed_event_count"] == 1
 
 
 def test_latest_board_endpoint_uses_most_recent_available_source(
@@ -312,6 +396,146 @@ def test_latest_board_endpoint_uses_most_recent_available_source(
     assert board.json()["name"] == "农业"
 
 
+def test_capital_action_status_reports_failed_attempt_and_keeps_last_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "capital-action-status.db"
+    monkeypatch.setenv("FOURSEASQUANT_DB_PATH", str(database))
+    _seed_fundamentals(database)
+    failed_at = datetime(2026, 7, 25, 16, 31, tzinfo=BEIJING)
+    save_capital_action_snapshot(
+        database,
+        CapitalActionSnapshot(
+            as_of_date=date(2026, 7, 25),
+            expected_codes=["000001", "600000"],
+            completed_codes=["600000"],
+            events=[],
+            errors={"000001": "TimeoutError: 巨潮请求超时"},
+        ),
+        collected_at=failed_at,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/fundamentals/capital-actions/status",
+            params={"target_date": "2026-07-25"},
+        )
+        evidence = client.get(
+            "/api/fundamentals/securities/600000/capital-actions",
+            params={"target_date": "2026-07-25"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["publication_date"] == "2026-07-24"
+    assert response.json()["latest_attempt_at"] == failed_at.isoformat()
+    assert response.json()["failure_stage"] == "资本行为采集"
+    assert response.json()["errors"] == {
+        "000001": "TimeoutError: 巨潮请求超时"
+    }
+    assert evidence.status_code == 200
+    assert evidence.json()["as_of_date"] == "2026-07-24"
+
+
+def test_first_capital_action_failure_is_visible_without_a_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "first-capital-failure.db"
+    monkeypatch.setenv("FOURSEASQUANT_DB_PATH", str(database))
+    initialize_database(database)
+    save_capital_action_snapshot(
+        database,
+        CapitalActionSnapshot(
+            as_of_date=date(2026, 7, 25),
+            expected_codes=["000001", "600000"],
+            completed_codes=["600000"],
+            events=[],
+            errors={"000001": "巨潮请求超时"},
+        ),
+        collected_at=datetime(2026, 7, 25, 16, 31, tzinfo=BEIJING),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/fundamentals/capital-actions/status",
+            params={"target_date": "2026-07-25"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["publication_date"] is None
+    assert response.json()["failure_stage"] == "资本行为采集"
+    assert response.json()["expected_count"] == 2
+    assert response.json()["completed_count"] == 1
+
+
+def test_monthly_failure_overrides_ready_capital_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "monthly-failure-status.db"
+    monkeypatch.setenv("FOURSEASQUANT_DB_PATH", str(database))
+    _seed_fundamentals(database)
+    save_fundamental_update_attempt(
+        database,
+        FundamentalUpdateAttempt(
+            target_date=date(2026, 7, 24),
+            stage="monthly_snapshot",
+            status="failed",
+            attempted_at=datetime(2026, 7, 24, 17, 0, tzinfo=BEIJING),
+            error_summary="覆盖 199/200",
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/fundamentals/capital-actions/status",
+            params={"target_date": "2026-07-24"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["publication_date"] == "2026-07-24"
+    assert response.json()["failure_stage"] == "月度基本面快照"
+    assert response.json()["errors"] == {"__global__": "覆盖 199/200"}
+
+
+def test_capital_action_retry_endpoint_runs_forced_fundamental_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "capital-action-retry.db"
+    monkeypatch.setenv("FOURSEASQUANT_DB_PATH", str(database))
+    initialize_database(database)
+    calls: list[bool] = []
+
+    def run_retry(*, force: bool = False) -> FundamentalAutomationOutcome:
+        calls.append(force)
+        return FundamentalAutomationOutcome(
+            status="succeeded",
+            target_date=date(2026, 7, 25),
+            stage="complete",
+            reason="资本行为已发布",
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "run_scheduled_fundamental_update",
+        run_retry,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/fundamentals/capital-actions/retry"
+        )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "succeeded"
+    assert calls == [True]
+
+
 def test_fundamental_overview_filters_searches_sorts_and_preserves_missing_data(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -337,6 +561,10 @@ def test_fundamental_overview_filters_searches_sorts_and_preserves_missing_data(
         partial = client.get(
             "/api/fundamentals/securities/000001/discussion/latest"
         )
+        all_overview = client.get(
+            "/api/fundamentals/overview",
+            params={"target_date": "2026-07-24", "limit": 100},
+        )
 
     assert overview.status_code == 200
     payload = overview.json()
@@ -344,6 +572,10 @@ def test_fundamental_overview_filters_searches_sorts_and_preserves_missing_data(
     assert payload["total"] == 2
     assert [item["code"] for item in payload["items"]] == ["600000", "000001"]
     assert payload["items"][0]["data_status"] == "complete"
+    assert all_overview.status_code == 200
+    assert "900001" not in {
+        item["code"] for item in all_overview.json()["items"]
+    }
     assert payload["items"][1]["monthly"] is None
     assert payload["items"][1]["discussion"]["combined"] is None
     assert payload["items"][1]["data_status"] == "partial"

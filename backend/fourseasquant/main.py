@@ -56,8 +56,14 @@ from fourseasquant.database import (
     snapshot_exists,
 )
 from fourseasquant.fundamental_discovery import BoardCandidate
+from fourseasquant.fundamental_automation import (
+    FundamentalAutomationOutcome,
+    run_scheduled_fundamental_update,
+)
 from fourseasquant.fundamental_queries import (
     BoardCandidatePublication,
+    CapitalActionEvidence,
+    CapitalActionStatus,
     DiscussionDayView,
     DiscussionSeries,
     FundamentalOverview,
@@ -66,6 +72,8 @@ from fourseasquant.fundamental_queries import (
     OverviewSortField,
     SortOrder,
     read_board_candidate,
+    read_capital_action_evidence,
+    read_capital_action_status,
     read_discussion_series,
     read_fundamental_overview,
     read_latest_board_candidate_publication,
@@ -349,6 +357,52 @@ def fundamental_board_candidate(
     if board is None:
         raise HTTPException(status_code=404, detail="未找到候选板块")
     return board
+
+
+@app.get(
+    "/api/fundamentals/capital-actions/status",
+    response_model=CapitalActionStatus,
+)
+def fundamental_capital_action_status(
+    target_date: date,
+) -> CapitalActionStatus:
+    return read_capital_action_status(
+        database_path(),
+        target_date=target_date,
+    )
+
+
+@app.post(
+    "/api/fundamentals/capital-actions/retry",
+    response_model=FundamentalAutomationOutcome,
+    status_code=201,
+)
+def retry_fundamental_capital_actions() -> FundamentalAutomationOutcome:
+    return run_scheduled_fundamental_update(force=True)
+
+
+@app.get(
+    "/api/fundamentals/securities/{symbol}/capital-actions",
+    response_model=CapitalActionEvidence,
+)
+def fundamental_capital_action_evidence(
+    symbol: str,
+    target_date: date | None = None,
+) -> CapitalActionEvidence:
+    try:
+        evidence = read_capital_action_evidence(
+            database_path(),
+            symbol,
+            target_date=target_date,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if evidence is None:
+        raise HTTPException(
+            status_code=404,
+            detail="该股票尚无已发布资本行为证据",
+        )
+    return evidence
 
 
 @app.get(

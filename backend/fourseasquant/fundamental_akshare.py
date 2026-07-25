@@ -11,6 +11,7 @@ from fourseasquant.fundamental_mechanical import (
     AnnualEarnings,
     BusinessSegment,
     PersonalFundamentalMonthlyInput,
+    ShareholderActions,
 )
 
 
@@ -25,12 +26,35 @@ class AKShareFundamentalFrames:
     business_segments: pd.DataFrame
 
 
+def verified_empty_dividend_frame(fallback: pd.DataFrame) -> pd.DataFrame:
+    required = {"派息", "进度"}
+    missing = required.difference(fallback.columns)
+    if missing:
+        raise ValueError(f"备用分红明细缺少字段: {sorted(missing)}")
+    if fallback.empty:
+        raise ValueError("备用分红明细为空，不能证明公司明确不分配")
+    cash_dividends = pd.to_numeric(
+        fallback["派息"],
+        errors="coerce",
+    )
+    if cash_dividends.isna().any():
+        raise ValueError("备用分红明细存在无法确认的派息数值")
+    if (cash_dividends > 0).any():
+        raise ValueError("备用分红明细存在现金派息，不能按空记录处理")
+    progress = fallback["进度"].astype(str).str.strip()
+    if not progress.str.contains("不分配", regex=False).all():
+        raise ValueError("备用分红明细未明确标记全部不分配")
+    return pd.DataFrame(columns=["派息日", "派息比例", "报告时间"])
+
+
 def build_monthly_input_from_akshare(
     *,
     code: str,
     as_of_date: date,
     price: float,
     frames: AKShareFundamentalFrames,
+    shareholder_actions: ShareholderActions | None = None,
+    floating_market_cap_universe: list[float] | None = None,
 ) -> PersonalFundamentalMonthlyInput:
     balance = _statement_before(frames.balance_sheet, as_of_date)
     profit = _statement_before(frames.profit_sheet, as_of_date)
@@ -161,10 +185,11 @@ def build_monthly_input_from_akshare(
             frames.business_segments,
             report_date,
         ),
+        # 机构持仓不是核心林奇指标；保留空值只为兼容历史模型。
         institution_holding_ratio=None,
         prior_institution_holding_ratio=None,
-        shareholder_actions=None,
-        floating_market_cap_universe=[],
+        shareholder_actions=shareholder_actions,
+        floating_market_cap_universe=floating_market_cap_universe or [],
     )
 
 

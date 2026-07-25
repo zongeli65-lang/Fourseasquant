@@ -3094,10 +3094,89 @@ h2 {
 .fundamental-controls,
 .fundamental-universe,
 .fundamental-detail,
-.fundamental-page-state {
+.fundamental-page-state,
+.capital-action-status {
   border: 1px solid var(--border-strong);
   border-radius: 0;
   background: #faf8f3;
+}
+
+.capital-action-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 20px;
+}
+
+.capital-action-status strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+
+.capital-action-status p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.capital-action-status dl {
+  display: flex;
+  gap: 24px;
+  margin: 0;
+}
+
+.capital-action-status dl > div {
+  min-width: 112px;
+}
+
+.capital-action-status dt {
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.capital-action-status dd {
+  margin: 0;
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 11px;
+}
+
+.capital-action-status > button {
+  min-height: 42px;
+  padding: 9px 14px;
+  border: 1px solid currentColor;
+  border-radius: 0;
+  color: inherit;
+  background: rgba(255, 253, 248, 0.7);
+  cursor: pointer;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.capital-action-status > button:hover:not(:disabled) {
+  color: #fff;
+  background: #8a2832;
+}
+
+.capital-action-status > button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.capital-action-status--failed {
+  border-color: #b13b45;
+  color: #74202a;
+  background: #f8e3df;
+  box-shadow: inset 5px 0 0 #b13b45;
+}
+
+.capital-action-status--stale {
+  border-color: #b58a43;
+  color: #6c4a16;
+  background: #f5ead3;
+  box-shadow: inset 5px 0 0 #b58a43;
 }
 
 .fundamentals-intro {
@@ -3567,6 +3646,70 @@ h2 {
   margin: 0;
   font-family: "JetBrains Mono Variable", monospace;
   font-size: 11px;
+}
+
+.capital-action-ledger {
+  margin: 0 16px 16px;
+  border: 1px solid #c8beb0;
+  background: #faf8f3;
+}
+
+.capital-action-ledger > header,
+.capital-action-ledger article > div,
+.capital-action-ledger article > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.capital-action-ledger > header {
+  padding: 10px 14px;
+  border-bottom: 1px solid #c8beb0;
+  color: var(--text-muted);
+  background: #ede7dd;
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 9px;
+}
+
+.capital-action-ledger article {
+  padding: 14px;
+  border-bottom: 1px solid #ddd5c9;
+}
+
+.capital-action-ledger article:last-child {
+  border-bottom: 0;
+}
+
+.capital-action-ledger article strong {
+  font-size: 12px;
+}
+
+.capital-action-ledger article > div span,
+.capital-action-ledger article > footer {
+  color: var(--text-muted);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 9px;
+}
+
+.capital-action-ledger article p {
+  margin: 9px 0 12px;
+  color: var(--text);
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 12px;
+}
+
+.capital-action-ledger article > footer a {
+  color: var(--brand-bright);
+  font-weight: 750;
+}
+
+.capital-action-ledger .is-confirmed {
+  color: #146457;
+}
+
+.capital-action-ledger .is-pending {
+  color: #815817;
 }
 
 .fundamental-primary-business {

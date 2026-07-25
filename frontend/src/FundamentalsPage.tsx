@@ -15,9 +15,10 @@ type BoardCandidate = {
 };
 
 type CapitalActionSignal = {
-  insider_net_purchase_amount: number;
-  insider_net_purchase_ratio: number;
-  insider_adjustment: number;
+  insider_window_complete: boolean;
+  insider_net_purchase_amount: number | null;
+  insider_net_purchase_ratio: number | null;
+  insider_adjustment: number | null;
   cancelled_buyback_amount: number;
   cancelled_buyback_ratio: number;
   buyback_bonus: number;
@@ -25,6 +26,58 @@ type CapitalActionSignal = {
   dilution_penalty: number;
   newly_issued_shares: number;
   shares_before_issuance: number | null;
+};
+
+type CapitalActionEventType =
+  | "insider_buy"
+  | "insider_sell"
+  | "cancelled_buyback"
+  | "share_dilution"
+  | "buyback_announcement";
+
+type CapitalActionEvent = {
+  event_key: string;
+  code: string;
+  name: string;
+  event_type: CapitalActionEventType;
+  announcement_at: string;
+  effective_date: string;
+  shares: number | null;
+  amount_cny: number | null;
+  price_cny: number | null;
+  shares_before: number | null;
+  reason: string | null;
+  confirmed_for_score: boolean;
+  exclusion_reason: string | null;
+  source_name: string;
+  source_url: string;
+  source_record_id: string;
+  content_sha256: string;
+  raw_payload: Record<string, unknown>;
+  collected_at: string;
+};
+
+type CapitalActionEvidence = {
+  code: string;
+  as_of_date: string;
+  published_at: string;
+  events: CapitalActionEvent[];
+};
+
+type CapitalActionStatus = {
+  requested_date: string;
+  publication_date: string | null;
+  published_at: string | null;
+  status: "ready" | "stale" | "failed" | "unavailable";
+  expected_count: number;
+  completed_count: number;
+  event_count: number;
+  confirmed_event_count: number;
+  latest_attempt_date: string | null;
+  latest_attempt_at: string | null;
+  latest_attempt_status: "published" | "failed" | null;
+  failure_stage: string | null;
+  errors: Record<string, string>;
 };
 
 type MonthlySnapshot = {
@@ -176,6 +229,14 @@ const dataStatusLabels: Record<OverviewItem["data_status"], string> = {
   complete: "月度与双平台齐全",
   partial: "部分数据可用",
   no_data: "暂无分析快照",
+};
+
+const capitalActionLabels: Record<CapitalActionEventType, string> = {
+  insider_buy: "内部人士主动买入",
+  insider_sell: "内部人士主动卖出",
+  cancelled_buyback: "已完成注销式回购",
+  share_dilution: "外部融资导致股本稀释",
+  buyback_announcement: "回购已完成但注销待确认",
 };
 
 function compactNumber(value: number | null, unit = ""): string {
@@ -353,14 +414,70 @@ function DiscussionTrend({ days }: { days: DiscussionDay[] }) {
   );
 }
 
+function CapitalActionLedger({
+  state,
+}: {
+  state: LoadState<CapitalActionEvidence>;
+}) {
+  if (state.kind === "loading") {
+    return <p className="fundamental-inline-empty">正在读取资本行为证据链…</p>;
+  }
+  if (state.kind === "error") {
+    return <p className="fundamental-inline-error">{state.message}</p>;
+  }
+  if (state.data.events.length === 0) {
+    return (
+      <p className="fundamental-inline-empty">
+        该完整批次已覆盖此股票，但最近十二个月没有符合规则的资本行为事件。
+      </p>
+    );
+  }
+  return (
+    <div className="capital-action-ledger">
+      <header>
+        <span>证据批次 {state.data.as_of_date}</span>
+        <span>发布于 {beijingDateTime(state.data.published_at)}</span>
+      </header>
+      {state.data.events.map((event) => (
+        <article key={event.event_key}>
+          <div>
+            <strong>{capitalActionLabels[event.event_type]}</strong>
+            <span>{event.effective_date}</span>
+          </div>
+          <p>
+            {event.amount_cny === null
+              ? event.shares === null
+                ? "公告未提供可核验金额或股数"
+                : `${compactNumber(event.shares, "股")}`
+              : compactNumber(event.amount_cny, "元")}
+            {event.reason ? ` · ${event.reason}` : ""}
+          </p>
+          <footer>
+            <span className={event.confirmed_for_score ? "is-confirmed" : "is-pending"}>
+              {event.confirmed_for_score
+                ? "已纳入机械评分"
+                : event.exclusion_reason ?? "暂不纳入机械评分"}
+            </span>
+            <a href={event.source_url} target="_blank" rel="noreferrer">
+              查看{event.source_name}证据
+            </a>
+          </footer>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function FundamentalDetail({
   item,
   monthlyState,
   discussionState,
+  capitalActionState,
 }: {
   item: OverviewItem;
   monthlyState: LoadState<MonthlySeries>;
   discussionState: LoadState<DiscussionSeries>;
+  capitalActionState: LoadState<CapitalActionEvidence>;
 }) {
   const latest = item.monthly?.snapshot ?? null;
   const discussion = item.discussion;
@@ -468,11 +585,6 @@ function FundamentalDetail({
                 value={percentile(latest.pretax_margin_peer_percentile)}
               />
               <Metric
-                label="机构持股比例"
-                value={ratio(latest.institution_holding_ratio)}
-                detail={`较前期 ${ratio(latest.institution_holding_change)}`}
-              />
-              <Metric
                 label="真金白银信号分"
                 value={decimal(latest.true_money_signal_score, 1)}
                 detail="唯一允许展示的机械评分，不是基本面总分"
@@ -493,8 +605,9 @@ function FundamentalDetail({
                 <h4>资本行为原始证据</h4>
                 {latest.capital_action_signal ? (
                   <dl>
-                    <div><dt>内部人士净买入</dt><dd>{compactNumber(latest.capital_action_signal.insider_net_purchase_amount, "元")}</dd></div>
-                    <div><dt>内部人士调整</dt><dd>{decimal(latest.capital_action_signal.insider_adjustment, 1)}</dd></div>
+                    <div><dt>内部人士数据</dt><dd>{latest.capital_action_signal.insider_window_complete ? "窗口完整" : "无法确定"}</dd></div>
+                    <div><dt>内部人士净买入</dt><dd>{latest.capital_action_signal.insider_window_complete ? compactNumber(latest.capital_action_signal.insider_net_purchase_amount, "元") : "无法确定"}</dd></div>
+                    <div><dt>内部人士调整</dt><dd>{latest.capital_action_signal.insider_window_complete ? decimal(latest.capital_action_signal.insider_adjustment, 1) : "无法确定"}</dd></div>
                     <div><dt>注销式回购</dt><dd>{compactNumber(latest.capital_action_signal.cancelled_buyback_amount, "元")}</dd></div>
                     <div><dt>回购奖励</dt><dd>{decimal(latest.capital_action_signal.buyback_bonus, 1)}</dd></div>
                     <div><dt>股本稀释比例</dt><dd>{ratio(latest.capital_action_signal.dilution_ratio)}</dd></div>
@@ -507,6 +620,7 @@ function FundamentalDetail({
                 )}
               </article>
             </div>
+            <CapitalActionLedger state={capitalActionState} />
           </section>
 
           <section className="fundamental-pillar">
@@ -671,6 +785,14 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
     kind: "ready",
     data: emptyDiscussionSeries,
   });
+  const [capitalActionState, setCapitalActionState] = useState<
+    LoadState<CapitalActionEvidence>
+  >({ kind: "loading" });
+  const [capitalStatusState, setCapitalStatusState] = useState<
+    LoadState<CapitalActionStatus>
+  >({ kind: "loading" });
+  const [capitalRetrying, setCapitalRetrying] = useState(false);
+  const [capitalRefreshRevision, setCapitalRefreshRevision] = useState(0);
   const [selectedBoard, setSelectedBoard] = useState(
     () => searchParams.get("fundamental_board") ?? "",
   );
@@ -721,15 +843,49 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
   }, [search, selectedBoard, sortField, sortOrder, targetDate]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    async function loadCapitalStatus() {
+      setCapitalStatusState({ kind: "loading" });
+      try {
+        const params = new URLSearchParams({ target_date: targetDate });
+        const response = await fetch(
+          `/api/fundamentals/capital-actions/status?${params}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) {
+          throw new Error(`资本行为状态接口返回 ${response.status}`);
+        }
+        setCapitalStatusState({
+          kind: "ready",
+          data: (await response.json()) as CapitalActionStatus,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setCapitalStatusState({
+          kind: "error",
+          message: "资本行为批次状态读取失败。",
+        });
+      }
+    }
+    void loadCapitalStatus();
+    return () => controller.abort();
+  }, [capitalRefreshRevision, targetDate]);
+
+  useEffect(() => {
     if (!selectedCode) {
       setMonthlyState({ kind: "ready", data: emptyMonthlySeries });
       setDiscussionState({ kind: "ready", data: emptyDiscussionSeries });
+      setCapitalActionState({
+        kind: "error",
+        message: "请选择股票后查看资本行为证据。",
+      });
       return;
     }
     const controller = new AbortController();
     async function loadDetail() {
       setMonthlyState({ kind: "loading" });
       setDiscussionState({ kind: "loading" });
+      setCapitalActionState({ kind: "loading" });
       const monthlyParams = new URLSearchParams({
         target_date: targetDate,
         limit: "12",
@@ -738,7 +894,11 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
         end_date: targetDate,
         limit: "30",
       });
-      const [monthlyResult, discussionResult] = await Promise.allSettled([
+      const capitalParams = new URLSearchParams({
+        target_date: targetDate,
+      });
+      const [monthlyResult, discussionResult, capitalActionResult] =
+        await Promise.allSettled([
         fetch(
           `/api/fundamentals/securities/${selectedCode}/monthly?${monthlyParams}`,
           { signal: controller.signal },
@@ -753,6 +913,15 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
           if (!response.ok) throw new Error(`舆情接口返回 ${response.status}`);
           return (await response.json()) as DiscussionSeries;
         }),
+        fetch(
+          `/api/fundamentals/securities/${selectedCode}/capital-actions?${capitalParams}`,
+          { signal: controller.signal },
+        ).then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`资本行为接口返回 ${response.status}`);
+          }
+          return (await response.json()) as CapitalActionEvidence;
+        }),
       ]);
       if (controller.signal.aborted) return;
       setMonthlyState(
@@ -765,10 +934,18 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
           ? { kind: "ready", data: discussionResult.value }
           : { kind: "error", message: "舆情历史读取失败。" },
       );
+      setCapitalActionState(
+        capitalActionResult.status === "fulfilled"
+          ? { kind: "ready", data: capitalActionResult.value }
+          : {
+              kind: "error",
+              message: "该股票尚无已发布的完整资本行为证据。",
+            },
+      );
     }
     void loadDetail();
     return () => controller.abort();
-  }, [selectedCode, targetDate]);
+  }, [capitalRefreshRevision, selectedCode, targetDate]);
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
@@ -792,6 +969,27 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     setSearch(searchDraft.trim());
+  }
+
+  async function retryCapitalActions() {
+    setCapitalRetrying(true);
+    try {
+      const response = await fetch(
+        "/api/fundamentals/capital-actions/retry",
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        throw new Error(`资本行为重试接口返回 ${response.status}`);
+      }
+      setCapitalRefreshRevision((current) => current + 1);
+    } catch {
+      setCapitalStatusState({
+        kind: "error",
+        message: "资本行为重新运行失败，请查看本机完整日志。",
+      });
+    } finally {
+      setCapitalRetrying(false);
+    }
   }
 
   return (
@@ -823,6 +1021,47 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
           </div>
         </dl>
       </section>
+
+      {capitalStatusState.kind === "ready" &&
+        capitalStatusState.data.status === "failed" && (
+          <section className="capital-action-status capital-action-status--failed" role="alert">
+            <div>
+              <strong>今日基本面更新失败</strong>
+              <p>
+                继续展示 {capitalStatusState.data.publication_date ?? "上一交易日"} 的完整结果，
+                绝不使用本次残缺数据覆盖。
+              </p>
+            </div>
+            <dl>
+              <div>
+                <dt>失败阶段</dt>
+                <dd>{capitalStatusState.data.failure_stage ?? "资本行为采集"}</dd>
+              </div>
+              <div>
+                <dt>失败时间</dt>
+                <dd>{beijingDateTime(capitalStatusState.data.latest_attempt_at)}</dd>
+              </div>
+              <div>
+                <dt>失败股票</dt>
+                <dd>{Object.keys(capitalStatusState.data.errors).length} 只</dd>
+              </div>
+            </dl>
+            <button
+              type="button"
+              disabled={capitalRetrying}
+              onClick={() => void retryCapitalActions()}
+            >
+              {capitalRetrying ? "正在重新运行…" : "重新运行今日基本面任务"}
+            </button>
+          </section>
+        )}
+      {capitalStatusState.kind === "ready" &&
+        capitalStatusState.data.status === "stale" && (
+          <section className="capital-action-status capital-action-status--stale">
+            当前日期尚无资本行为完整批次，正在展示{" "}
+            {capitalStatusState.data.publication_date ?? "最近一次"} 成功结果。
+          </section>
+        )}
 
       <section className="fundamental-controls" aria-label="基本面筛选">
         <label>
@@ -958,6 +1197,7 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
               item={selectedItem}
               monthlyState={monthlyState}
               discussionState={discussionState}
+              capitalActionState={capitalActionState}
             />
           ) : (
             <section className="fundamental-page-state">请选择一只股票查看四支柱详情。</section>

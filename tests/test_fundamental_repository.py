@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+import sqlite3
 from zoneinfo import ZoneInfo
 
 from fourseasquant.database import initialize_database
@@ -16,14 +17,18 @@ from fourseasquant.fundamental_mechanical import (
 )
 from fourseasquant.fundamental_repository import (
     count_discussion_post_references,
+    read_monthly_snapshot_coverage,
     read_latest_personal_fundamental_monthly_snapshot,
     read_combined_discussion_signal,
     read_platform_discussion_aggregate,
     save_combined_discussion_signal,
     save_discussion_day,
     save_personal_fundamental_monthly_snapshot,
+    save_personal_fundamental_monthly_batch,
     save_parsed_evidence,
 )
+
+import pytest
 
 
 def _personal_fundamental_monthly_snapshot(
@@ -149,6 +154,148 @@ def test_monthly_storage_reuses_evidence_and_persists_only_changed_fields(
         read_latest_personal_fundamental_monthly_snapshot(database, "600000")
         == second_snapshot
     )
+
+
+def test_monthly_batch_rolls_back_every_stock_when_database_write_fails(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "monthly-batch.db"
+    initialize_database(database)
+    stored_at = datetime(
+        2026,
+        7,
+        31,
+        16,
+        tzinfo=ZoneInfo("Asia/Shanghai"),
+    )
+    first = _personal_fundamental_monthly_snapshot(date(2026, 7, 31))
+    second = first.model_copy(update={"code": "000001"})
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_second_monthly_snapshot
+            BEFORE INSERT ON personal_fundamental_monthly_snapshots
+            WHEN NEW.code = '000001'
+            BEGIN
+                SELECT RAISE(ABORT, '模拟第二只股票写入失败');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="模拟第二只股票写入失败"):
+        save_personal_fundamental_monthly_batch(
+            database,
+            [
+                (first, ["https://example.test/first"]),
+                (second, ["https://example.test/second"]),
+            ],
+            created_at=stored_at,
+        )
+
+    assert (
+        read_latest_personal_fundamental_monthly_snapshot(
+            database,
+            "600000",
+        )
+        is None
+    )
+    assert (
+        read_latest_personal_fundamental_monthly_snapshot(
+            database,
+            "000001",
+        )
+        is None
+    )
+
+
+def test_unchanged_monthly_snapshot_uses_batch_publication_for_coverage(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "monthly-heartbeat.db"
+    initialize_database(database)
+    stored_at = datetime(
+        2026,
+        7,
+        31,
+        16,
+        tzinfo=ZoneInfo("Asia/Shanghai"),
+    )
+    june = _personal_fundamental_monthly_snapshot(date(2026, 6, 30))
+    july = june.model_copy(update={"as_of_date": date(2026, 7, 31)})
+    save_personal_fundamental_monthly_snapshot(
+        database,
+        june,
+        source_urls=[],
+        created_at=stored_at,
+    )
+    assert read_monthly_snapshot_coverage(
+        database,
+        as_of_date=date(2026, 6, 30),
+        codes=["600000"],
+    ) == set()
+
+    result = save_personal_fundamental_monthly_batch(
+        database,
+        [(july, [])],
+        created_at=stored_at,
+    )
+
+    assert result.results["600000"].stored is False
+    assert (
+        read_latest_personal_fundamental_monthly_snapshot(
+            database,
+            "600000",
+        )
+        == june
+    )
+    assert read_monthly_snapshot_coverage(
+        database,
+        as_of_date=date(2026, 7, 31),
+        codes=["600000"],
+    ) == {"600000"}
+    legacy = july.model_copy(
+        update={
+            "as_of_date": date(2026, 8, 31),
+            "rules_version": "personal-fundamental-v0",
+            "ordinary_pe": 99,
+        }
+    )
+    save_personal_fundamental_monthly_snapshot(
+        database,
+        legacy,
+        source_urls=[],
+        created_at=stored_at,
+    )
+    assert (
+        read_latest_personal_fundamental_monthly_snapshot(
+            database,
+            "600000",
+        )
+        == june
+    )
+    assert (
+        read_latest_personal_fundamental_monthly_snapshot(
+            database,
+            "600000",
+            rules_version="personal-fundamental-v0",
+        )
+        == legacy
+    )
+    assert read_monthly_snapshot_coverage(
+        database,
+        as_of_date=date(2026, 7, 31),
+        codes=["600000"],
+        rules_version="personal-fundamental-v0",
+    ) == set()
+    with sqlite3.connect(database) as connection:
+        snapshot_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM personal_fundamental_monthly_snapshots
+            WHERE code = '600000' AND as_of_date = '2026-07-31'
+            """
+        ).fetchone()
+    assert snapshot_count == (0,)
 
 
 def test_discussion_storage_keeps_only_references_and_purges_after_thirty_days(

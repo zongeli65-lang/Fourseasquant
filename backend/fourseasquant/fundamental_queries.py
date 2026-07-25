@@ -17,8 +17,15 @@ from fourseasquant.fundamental_discovery import (
     BoardCandidate,
     BoardCandidateSnapshot,
 )
+from fourseasquant.fundamental_capital_actions import CapitalActionEvent
 from fourseasquant.fundamental_mechanical import (
     PersonalFundamentalMonthlySnapshot,
+    RULES_VERSION,
+)
+from fourseasquant.fundamental_repository import (
+    read_latest_capital_action_batch,
+    read_latest_fundamental_update_attempt,
+    read_latest_published_capital_action_snapshot,
 )
 
 
@@ -37,6 +44,7 @@ OverviewSortField = Literal[
     "weighted_sentiment",
 ]
 SortOrder = Literal["asc", "desc"]
+CapitalActionDataStatus = Literal["ready", "stale", "failed", "unavailable"]
 
 
 class BoardCandidatePublication(BaseModel):
@@ -53,6 +61,29 @@ class MonthlyFundamentalRecord(BaseModel):
 class MonthlyFundamentalSeries(BaseModel):
     code: str
     records: list[MonthlyFundamentalRecord]
+
+
+class CapitalActionEvidence(BaseModel):
+    code: str
+    as_of_date: date
+    published_at: datetime
+    events: list[CapitalActionEvent]
+
+
+class CapitalActionStatus(BaseModel):
+    requested_date: date
+    publication_date: date | None
+    published_at: datetime | None
+    status: CapitalActionDataStatus
+    expected_count: int
+    completed_count: int
+    event_count: int
+    confirmed_event_count: int
+    latest_attempt_date: date | None
+    latest_attempt_at: datetime | None
+    latest_attempt_status: Literal["published", "failed"] | None
+    failure_stage: str | None
+    errors: dict[str, str]
 
 
 class DiscussionDayView(BaseModel):
@@ -157,22 +188,23 @@ def read_monthly_fundamental_series(
     *,
     target_date: date | None = None,
     limit: int = 12,
+    rules_version: str = RULES_VERSION,
 ) -> MonthlyFundamentalSeries:
     _require_code(code)
     parameters: tuple[object, ...]
     date_filter = ""
     if target_date is None:
-        parameters = (code,)
+        parameters = (code, rules_version)
     else:
         date_filter = "AND as_of_date <= ?"
-        parameters = (code, target_date.isoformat())
+        parameters = (code, rules_version, target_date.isoformat())
     with sqlite3.connect(path) as connection:
         rows = connection.execute(
             f"""
             SELECT as_of_date, rules_version, changed_fields_json,
                    source_urls_json, created_at
             FROM personal_fundamental_monthly_snapshots
-            WHERE code = ?
+            WHERE code = ? AND rules_version = ?
             {date_filter}
             ORDER BY as_of_date, created_at, rules_version
             """,
@@ -187,7 +219,7 @@ def read_monthly_fundamental_series(
         source_urls_json,
         created_at,
     ) in rows:
-        version = cast(str, rules_version)
+        version = rules_version
         state = states.setdefault(
             version,
             {"rules_version": version, "code": code},
@@ -227,6 +259,159 @@ def read_latest_monthly_fundamental(
         limit=1,
     )
     return series.records[0] if series.records else None
+
+
+def read_capital_action_evidence(
+    path: Path,
+    code: str,
+    *,
+    target_date: date | None = None,
+) -> CapitalActionEvidence | None:
+    _require_code(code)
+    publication = read_latest_published_capital_action_snapshot(
+        path,
+        as_of_date=target_date,
+    )
+    if publication is None or code not in publication.completed_codes:
+        return None
+    return CapitalActionEvidence(
+        code=code,
+        as_of_date=publication.as_of_date,
+        published_at=publication.published_at,
+        events=[
+            event for event in publication.events if event.code == code
+        ],
+    )
+
+
+def read_capital_action_status(
+    path: Path,
+    *,
+    target_date: date,
+) -> CapitalActionStatus:
+    latest_attempt = read_latest_capital_action_batch(
+        path,
+        as_of_date=target_date,
+    )
+    update_attempt = read_latest_fundamental_update_attempt(
+        path,
+        target_date=target_date,
+    )
+    publication = read_latest_published_capital_action_snapshot(
+        path,
+        as_of_date=target_date,
+    )
+    if publication is None:
+        initial_failed = (
+            latest_attempt is not None
+            and latest_attempt.as_of_date == target_date
+            and latest_attempt.status == "failed"
+        )
+        return CapitalActionStatus(
+            requested_date=target_date,
+            publication_date=None,
+            published_at=None,
+            status="failed" if initial_failed else "unavailable",
+            expected_count=(
+                len(latest_attempt.expected_codes)
+                if latest_attempt is not None
+                else 0
+            ),
+            completed_count=(
+                len(latest_attempt.completed_codes)
+                if latest_attempt is not None
+                else 0
+            ),
+            event_count=0,
+            confirmed_event_count=0,
+            latest_attempt_date=(
+                latest_attempt.as_of_date if latest_attempt else None
+            ),
+            latest_attempt_at=(
+                latest_attempt.collected_at if latest_attempt else None
+            ),
+            latest_attempt_status=(
+                latest_attempt.status if latest_attempt else None
+            ),
+            failure_stage=(
+                "资本行为采集"
+                if initial_failed
+                else None
+            ),
+            errors=(
+                latest_attempt.errors
+                if initial_failed and latest_attempt is not None
+                else {}
+            ),
+        )
+    failed_today = (
+        latest_attempt is not None
+        and latest_attempt.as_of_date == target_date
+        and latest_attempt.status == "failed"
+    )
+    fundamental_failed_today = (
+        update_attempt is not None
+        and update_attempt.target_date == target_date
+        and update_attempt.status == "failed"
+    )
+    failure_attempted_at = (
+        update_attempt.attempted_at
+        if fundamental_failed_today and update_attempt is not None
+        else (
+            latest_attempt.collected_at
+            if failed_today and latest_attempt is not None
+            else None
+        )
+    )
+    failure_stage = (
+        "月度基本面快照"
+        if fundamental_failed_today
+        else ("资本行为采集" if failed_today else None)
+    )
+    failure_errors = (
+        {"__global__": update_attempt.error_summary or "月度基本面失败"}
+        if fundamental_failed_today and update_attempt is not None
+        else (
+            latest_attempt.errors
+            if failed_today and latest_attempt is not None
+            else {}
+        )
+    )
+    return CapitalActionStatus(
+        requested_date=target_date,
+        publication_date=publication.as_of_date,
+        published_at=publication.published_at,
+        status=(
+            "failed"
+            if failed_today or fundamental_failed_today
+            else (
+                "ready"
+                if publication.as_of_date == target_date
+                else "stale"
+            )
+        ),
+        expected_count=len(publication.expected_codes),
+        completed_count=len(publication.completed_codes),
+        event_count=len(publication.events),
+        confirmed_event_count=sum(
+            event.confirmed_for_score for event in publication.events
+        ),
+        latest_attempt_date=(
+            target_date
+            if failed_today or fundamental_failed_today
+            else (latest_attempt.as_of_date if latest_attempt else None)
+        ),
+        latest_attempt_at=failure_attempted_at or (
+            latest_attempt.collected_at if latest_attempt else None
+        ),
+        latest_attempt_status=(
+            "failed"
+            if failed_today or fundamental_failed_today
+            else (latest_attempt.status if latest_attempt else None)
+        ),
+        failure_stage=failure_stage,
+        errors=failure_errors,
+    )
 
 
 def read_discussion_series(
@@ -463,18 +648,24 @@ def _stored_fundamental_codes(
     target_date: date | None,
 ) -> set[str]:
     date_filter = ""
-    parameters: tuple[object, ...] = ()
+    monthly_parameters: tuple[object, ...] = (RULES_VERSION,)
+    discussion_parameters: tuple[object, ...] = ()
     if target_date is not None:
-        date_filter = "WHERE as_of_date <= ?"
-        parameters = (target_date.isoformat(),)
+        date_filter = "AND as_of_date <= ?"
+        monthly_parameters = (
+            RULES_VERSION,
+            target_date.isoformat(),
+        )
+        discussion_parameters = (target_date.isoformat(),)
     with sqlite3.connect(path) as connection:
         monthly = connection.execute(
             f"""
             SELECT DISTINCT code
             FROM personal_fundamental_monthly_snapshots
+            WHERE rules_version = ?
             {date_filter}
             """,
-            parameters,
+            monthly_parameters,
         ).fetchall()
         discussion_filter = (
             "WHERE actual_date <= ?" if target_date is not None else ""
@@ -485,7 +676,7 @@ def _stored_fundamental_codes(
             FROM discussion_daily_aggregates
             {discussion_filter}
             """,
-            parameters,
+            discussion_parameters,
         ).fetchall()
     return {
         cast(str, row[0])
@@ -562,16 +753,17 @@ def _read_latest_monthly_map(
     if not codes:
         return {}
     date_filter = ""
-    parameters: tuple[object, ...] = ()
+    parameters: tuple[object, ...] = (RULES_VERSION,)
     if target_date is not None:
-        date_filter = "WHERE as_of_date <= ?"
-        parameters = (target_date.isoformat(),)
+        date_filter = "AND as_of_date <= ?"
+        parameters = (RULES_VERSION, target_date.isoformat())
     with sqlite3.connect(path) as connection:
         rows = connection.execute(
             f"""
             SELECT code, as_of_date, rules_version, changed_fields_json,
                    source_urls_json, created_at
             FROM personal_fundamental_monthly_snapshots
+            WHERE rules_version = ?
             {date_filter}
             ORDER BY code, rules_version, as_of_date, created_at
             """,

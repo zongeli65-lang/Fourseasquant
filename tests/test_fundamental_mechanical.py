@@ -9,7 +9,9 @@ from fourseasquant.fundamental_mechanical import (
     BusinessSegment,
     PersonalFundamentalMonthlyInput,
     ShareholderActions,
+    capital_action_signal_score,
     calculate_personal_fundamental_monthly_snapshot,
+    _capital_action_signal,
 )
 
 
@@ -117,6 +119,23 @@ def test_personal_fundamental_monthly_snapshot_calculates_four_pillars() -> None
     assert snapshot.inventory_status == "available"
     assert snapshot.floating_market_cap == pytest.approx(1_000_000_000)
     assert snapshot.floating_market_cap_percentile == pytest.approx(200 / 3)
+
+
+def test_unknown_insider_window_remains_null_and_neutral_in_score() -> None:
+    signal = _capital_action_signal(
+        ShareholderActions(
+            average_floating_market_cap=1_000_000_000,
+            insider_window_complete=False,
+            insider_net_purchase_amount=None,
+            cancelled_buyback_amount=10_000_000,
+        )
+    )
+
+    assert signal.insider_window_complete is False
+    assert signal.insider_net_purchase_amount is None
+    assert signal.insider_net_purchase_ratio is None
+    assert signal.insider_adjustment is None
+    assert capital_action_signal_score(signal) == 70
 
 
 def test_non_positive_earnings_do_not_produce_misleading_valuation_ratios() -> None:

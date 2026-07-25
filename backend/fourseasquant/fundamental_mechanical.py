@@ -32,7 +32,8 @@ class BusinessSegment(BaseModel):
 
 class ShareholderActions(BaseModel):
     average_floating_market_cap: float = Field(gt=0)
-    insider_net_purchase_amount: float = 0
+    insider_window_complete: bool = True
+    insider_net_purchase_amount: float | None = 0
     cancelled_buyback_amount: float = Field(default=0, ge=0)
     newly_issued_shares: float = Field(default=0, ge=0)
     shares_before_issuance: float | None = Field(default=None, gt=0)
@@ -67,6 +68,7 @@ class PersonalFundamentalMonthlyInput(BaseModel):
     historical_pretax_margins: list[float] = Field(default_factory=list)
     peer_pretax_margins: list[float] = Field(default_factory=list)
     business_segments: list[BusinessSegment]
+    # 仅用于读取历史快照；不再采集、展示或参与核心机械规则。
     institution_holding_ratio: float | None = Field(default=None, ge=0, le=1)
     prior_institution_holding_ratio: float | None = Field(
         default=None,
@@ -111,6 +113,7 @@ class PersonalFundamentalMonthlySnapshot(BaseModel):
     pretax_margin_peer_percentile: float | None
     main_business_name: str | None
     main_business_profit_share: float | None
+    # 兼容已有 API 和历史快照，新的核心页面不再展示。
     institution_holding_ratio: float | None
     institution_holding_change: float | None
     capital_action_signal: CapitalActionSignal | None
@@ -120,9 +123,10 @@ class PersonalFundamentalMonthlySnapshot(BaseModel):
 
 
 class CapitalActionSignal(BaseModel):
-    insider_net_purchase_amount: float
-    insider_net_purchase_ratio: float
-    insider_adjustment: float
+    insider_window_complete: bool = True
+    insider_net_purchase_amount: float | None = 0
+    insider_net_purchase_ratio: float | None = 0
+    insider_adjustment: float | None = 0
     cancelled_buyback_amount: float
     cancelled_buyback_ratio: float
     buyback_bonus: float
@@ -421,11 +425,21 @@ def _optional_difference(
 
 
 def _capital_action_signal(actions: ShareholderActions) -> CapitalActionSignal:
-    insider_ratio = (
+    insider_amount = (
         actions.insider_net_purchase_amount
-        / actions.average_floating_market_cap
+        if actions.insider_window_complete
+        else None
     )
-    insider_adjustment = max(-30.0, min(30.0, insider_ratio / 0.003 * 30))
+    insider_ratio = (
+        insider_amount / actions.average_floating_market_cap
+        if insider_amount is not None
+        else None
+    )
+    insider_adjustment = (
+        max(-30.0, min(30.0, insider_ratio / 0.003 * 30))
+        if insider_ratio is not None
+        else None
+    )
     buyback_ratio = (
         actions.cancelled_buyback_amount
         / actions.average_floating_market_cap
@@ -438,7 +452,8 @@ def _capital_action_signal(actions: ShareholderActions) -> CapitalActionSignal:
         )
     dilution_penalty = min(20.0, dilution_ratio / 0.10 * 20)
     return CapitalActionSignal(
-        insider_net_purchase_amount=actions.insider_net_purchase_amount,
+        insider_window_complete=actions.insider_window_complete,
+        insider_net_purchase_amount=insider_amount,
         insider_net_purchase_ratio=insider_ratio,
         insider_adjustment=insider_adjustment,
         cancelled_buyback_amount=actions.cancelled_buyback_amount,
@@ -457,7 +472,7 @@ def capital_action_signal_score(signal: CapitalActionSignal) -> float:
         min(
             100.0,
             50
-            + signal.insider_adjustment
+            + (signal.insider_adjustment or 0)
             + signal.buyback_bonus
             - signal.dilution_penalty,
         ),

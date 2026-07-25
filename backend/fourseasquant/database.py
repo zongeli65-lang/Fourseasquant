@@ -462,7 +462,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '12')
+            VALUES ('schema_version', '16')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -479,7 +479,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("12",)
+    return row == ("16",)
 
 
 def save_historical_market_summary(

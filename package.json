@@ -11,6 +11,8 @@
     "data:candles-year": "uv run python scripts/import_candlestick_history.py",
     "data:technical-init": "uv run python scripts/initialize_technical_scores.py",
     "data:fundamental-boards": "uv run python scripts/import_fundamental_boards.py",
+    "data:fundamental-capital": "uv run python scripts/import_fundamental_capital_actions.py",
+    "data:fundamental-init": "uv run python scripts/initialize_fundamental_data.py",
     "data:fundamental-monthly": "uv run python scripts/import_fundamental_monthly_akshare.py",
     "fundamental:monthly": "uv run python scripts/calculate_fundamental_monthly.py",
     "fundamental:sentiment": "uv run python scripts/aggregate_discussion_day.py",
