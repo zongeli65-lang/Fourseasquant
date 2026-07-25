@@ -35,6 +35,8 @@ def base(
         ttm_adjusted_eps=ttm,
         prior_ttm_adjusted_eps=prior_ttm,
         ttm_dividend_per_share=0.3,
+        net_debt_to_equity=-0.2,
+        financial_safety_status="available",
         audit_status=audit_status,
         performance_forecast_blocked=performance_forecast_blocked,
         major_risk_blocked=major_risk_blocked,
@@ -55,6 +57,9 @@ def test_three_positive_consecutive_years_produce_absolute_grade() -> None:
     assert result.lynch_ratio == pytest.approx(3.45)
     assert result.absolute_grade == "exceptional"
     assert result.ranking_eligible is True
+    assert result.growth_status == "continuous_growth"
+    assert result.valuation_status == "applicable"
+    assert result.core_data_status == "complete"
 
 
 def test_missing_nonconsecutive_or_nonpositive_years_are_not_calculable() -> None:
@@ -132,7 +137,7 @@ def test_annual_declines_use_confirmed_warning_thresholds() -> None:
     assert "annual_earnings_deteriorated_above_50_percent" in severe.warnings
 
 
-def test_audit_forecast_and_major_risk_gate_ranking_but_keep_value() -> None:
+def test_noncore_risk_evidence_does_not_remove_valid_lynch_ranking() -> None:
     results = [
         calculate_lynch_daily_result(
             base("600001", audit_status="unknown"),
@@ -152,12 +157,10 @@ def test_audit_forecast_and_major_risk_gate_ranking_but_keep_value() -> None:
     ]
 
     assert all(item.calculable for item in results)
-    assert all(not item.ranking_eligible for item in results)
-    assert [item.ranking_exclusion_reason for item in results] == [
-        "audit_not_standard_unqualified",
-        "performance_forecast_risk",
-        "major_public_risk",
-    ]
+    assert all(item.ranking_eligible for item in results)
+    assert all(
+        item.ranking_exclusion_reason is None for item in results
+    )
 
 
 def test_percentile_uses_only_eligible_calculable_results_and_averages_ties() -> None:
@@ -195,5 +198,5 @@ def test_percentile_uses_only_eligible_calculable_results_and_averages_ties() ->
     assert ranked["600002"].market_percentile == 50.0
     assert ranked["600003"].market_percentile == 50.0
     assert ranked["600004"].market_percentile == 100.0
-    assert ranked["600005"].market_percentile is None
-    assert all(item.percentile_universe_size == 4 for item in ranked.values())
+    assert ranked["600005"].market_percentile == 50.0
+    assert all(item.percentile_universe_size == 5 for item in ranked.values())

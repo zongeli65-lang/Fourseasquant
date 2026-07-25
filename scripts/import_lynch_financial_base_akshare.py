@@ -23,6 +23,7 @@ from fourseasquant.fundamental_lynch import LynchFinancialBase  # noqa: E402
 from fourseasquant.fundamental_lynch_akshare import (  # noqa: E402
     REQUIRED_DIVIDEND_COLUMNS,
     build_lynch_financial_base_from_akshare,
+    latest_eligible_financial_report_date,
 )
 from fourseasquant.fundamental_lynch_repository import (  # noqa: E402
     read_lynch_financial_collection_cache,
@@ -37,6 +38,17 @@ from fourseasquant.fundamental_lynch_service import (  # noqa: E402
 
 
 BEIJING = ZoneInfo("Asia/Shanghai")
+LEGACY_LYNCH_RULES_VERSION = "lynch-market-v1"
+BALANCE_SHEET_ENDPOINT = (
+    "https://emweb.securities.eastmoney.com/PC_HSF10/"
+    "NewFinanceAnalysis/zcfzbAjaxNew"
+)
+COMPANY_TYPE_BY_ORG_TYPE = {
+    "证券": "1",
+    "保险": "2",
+    "银行": "3",
+    "通用": "4",
+}
 
 
 def main() -> int:
@@ -103,7 +115,11 @@ def main() -> int:
             ),
             flush=True,
         )
-        dividends = _collect_individual_dividends(pending)
+        dividends = _legacy_dividends(
+            path,
+            universe.actual_data_date,
+            pending,
+        )
     errors: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=max(1, arguments.workers)) as executor:
         futures: dict[Future[LynchFinancialBase], LynchMarketSecurity] = {
@@ -213,10 +229,16 @@ def _collect_one_with_retry(
                 )
             )
             try:
+                balance_sheet = _collect_balance_sheet(
+                    security,
+                    financial,
+                    as_of_date,
+                )
                 return build_lynch_financial_base_from_akshare(
                     code=security.code,
                     as_of_date=as_of_date,
                     financial=financial,
+                    balance_sheet=balance_sheet,
                     dividends=selected_dividends,
                     audit_status="unknown",
                     performance_forecast_blocked=False,
@@ -239,6 +261,50 @@ def _collect_one_with_retry(
                 time.sleep(0.5 * (2**attempt))
     assert last_error is not None
     raise last_error
+
+
+def _collect_balance_sheet(
+    security: LynchMarketSecurity,
+    financial: pd.DataFrame,
+    as_of_date: date,
+) -> pd.DataFrame:
+    report_date = latest_eligible_financial_report_date(
+        financial,
+        as_of_date,
+    )
+    report_dates = pd.to_datetime(
+        financial["REPORT_DATE"], errors="coerce"
+    ).dt.date
+    rows = financial[report_dates == report_date]
+    if rows.empty or "ORG_TYPE" not in rows.columns:
+        raise ValueError("主要财务指标缺少公司类型")
+    org_type = str(rows.iloc[0]["ORG_TYPE"]).strip()
+    company_type = COMPANY_TYPE_BY_ORG_TYPE.get(org_type)
+    if company_type is None:
+        raise ValueError(f"不支持的公司类型: {org_type}")
+    market_code = (
+        f"SH{security.code}"
+        if security.code.startswith(("6", "9"))
+        else f"SZ{security.code}"
+    )
+    response = requests.get(
+        BALANCE_SHEET_ENDPOINT,
+        params={
+            "companyType": company_type,
+            "reportDateType": "0",
+            "reportType": "1",
+            "dates": report_date.isoformat(),
+            "code": market_code,
+        },
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data")
+    if not isinstance(data, list) or not data:
+        raise ValueError(
+            f"资产负债表缺少 {report_date.isoformat()} 报告期"
+        )
+    return pd.DataFrame(data)
 
 
 def _collect_bulk_dividends(as_of_date: date) -> dict[str, pd.DataFrame]:
@@ -320,6 +386,37 @@ def _collect_individual_dividends(
                 flush=True,
             )
     return result
+
+
+def _legacy_dividends(
+    path: Path,
+    target_date: date,
+    securities: list[LynchMarketSecurity],
+) -> dict[str, pd.DataFrame]:
+    legacy = read_lynch_financial_collection_cache(
+        path,
+        target_date=target_date,
+        rules_version=LEGACY_LYNCH_RULES_VERSION,
+    )
+    missing = [item.code for item in securities if item.code not in legacy]
+    if missing:
+        raise RuntimeError(
+            "旧正式林奇财务基座缺少股息数据: "
+            + ",".join(missing[:10])
+        )
+    return {
+        item.code: pd.DataFrame(
+            [
+                {
+                    "派息日": target_date.isoformat(),
+                    "派息比例": (
+                        legacy[item.code].ttm_dividend_per_share * 10
+                    ),
+                }
+            ]
+        )
+        for item in securities
+    }
 
 
 def _empty_dividends() -> pd.DataFrame:

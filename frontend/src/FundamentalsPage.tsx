@@ -227,9 +227,25 @@ type LynchItem = {
   ttm_adjusted_eps: number | null;
   prior_ttm_adjusted_eps: number | null;
   ttm_dividend_per_share: number;
+  net_debt_to_equity: number | null;
+  financial_safety_status:
+    | "available"
+    | "invalid_equity"
+    | "insufficient_data";
   three_year_cagr: number | null;
+  growth_status:
+    | "continuous_growth"
+    | "non_continuous_growth"
+    | "earnings_contraction"
+    | "loss_or_nonpositive"
+    | "insufficient_data";
   dividend_yield: number | null;
   adjusted_pe: number | null;
+  valuation_status:
+    | "applicable"
+    | "loss_making"
+    | "invalid_price"
+    | "insufficient_data";
   lynch_ratio: number | null;
   absolute_grade: LynchGrade;
   warnings: string[];
@@ -243,6 +259,10 @@ type LynchItem = {
   ranking_exclusion_reason: string | null;
   market_percentile: number | null;
   percentile_universe_size: number;
+  core_data_status:
+    | "complete"
+    | "economic_not_applicable"
+    | "source_missing";
 };
 
 type LoadState<T> =
@@ -285,10 +305,25 @@ const lynchGradeLabels: Record<LynchGrade, string> = {
   insufficient_data: "数据不足",
 };
 
-const dataStatusLabels: Record<OverviewItem["data_status"], string> = {
-  complete: "月度与双平台齐全",
-  partial: "部分数据可用",
-  no_data: "暂无分析快照",
+const growthStatusLabels: Record<LynchItem["growth_status"], string> = {
+  continuous_growth: "连续增长",
+  non_continuous_growth: "增长不连续",
+  earnings_contraction: "盈利收缩",
+  loss_or_nonpositive: "存在亏损或非正盈利",
+  insufficient_data: "数据不足",
+};
+
+const valuationStatusLabels: Record<LynchItem["valuation_status"], string> = {
+  applicable: "适用",
+  loss_making: "亏损，不适用",
+  invalid_price: "价格无效",
+  insufficient_data: "数据不足",
+};
+
+const coreDataStatusLabels: Record<LynchItem["core_data_status"], string> = {
+  complete: "公共底座完整",
+  economic_not_applicable: "数据完整，但经济上不适用",
+  source_missing: "上游数据缺失",
 };
 
 const capitalActionLabels: Record<CapitalActionEventType, string> = {
@@ -551,7 +586,7 @@ function FundamentalDetail({
     <section className="fundamental-detail" aria-labelledby="fundamental-detail-title">
       <header className="fundamental-detail__title">
         <div>
-          <p className="section-kicker">个人四支柱 · 机械结果</p>
+          <p className="section-kicker">林奇核心底座 · 机械结果</p>
           <h2 id="fundamental-detail-title">
             {item.name} <span>{item.code}</span>
           </h2>
@@ -572,40 +607,47 @@ function FundamentalDetail({
       <section className="fundamental-pillar">
         <PillarHeader
           number="I"
-          title="三年林奇比"
-          description="该股票在全量基本面股票库中的日频字段；板块只改变筛选范围，不生成另一套结果。"
+          title="林奇核心底座"
+          description="只保留盈利增长、估值、财务安全三个独立维度；林奇比是派生结果。"
         />
         {lynch ? (
           <>
             <div className="fundamental-metric-grid">
-              <Metric label="三年林奇比" value={decimal(lynch.lynch_ratio)} />
               <Metric
-                label="绝对等级"
-                value={lynchGradeLabels[lynch.absolute_grade]}
-              />
-              <Metric
-                label="正式市场百分位"
-                value={percentile(lynch.market_percentile)}
-                detail={
-                  lynch.ranking_eligible
-                    ? `排名样本 ${lynch.percentile_universe_size} 只`
-                    : "证据闸门未通过，不进入正式排名"
-                }
-              />
-              <Metric
-                label="三年扣非每股收益复合增长"
+                label="盈利增长 · 三年扣非复合增长"
                 value={ratio(lynch.three_year_cagr)}
+                detail={growthStatusLabels[lynch.growth_status]}
               />
-              <Metric label="扣非市盈率" value={decimal(lynch.adjusted_pe)} />
-              <Metric label="股息率" value={ratio(lynch.dividend_yield)} />
-              <Metric label="收盘价" value={decimal(lynch.close)} />
               <Metric
-                label="审计证据"
-                value={
-                  lynch.audit_status === "unknown"
-                    ? "待确认"
-                    : lynch.audit_status
+                label="估值 · 扣非市盈率"
+                value={decimal(lynch.adjusted_pe)}
+                detail={valuationStatusLabels[lynch.valuation_status]}
+              />
+              <Metric
+                label="财务安全 · 有息净负债率"
+                value={ratio(lynch.net_debt_to_equity)}
+                detail={
+                  lynch.financial_safety_status === "available"
+                    ? "负值代表净现金"
+                    : lynch.financial_safety_status === "invalid_equity"
+                      ? "归母净资产非正，不适用"
+                      : "资产负债表数据不足"
                 }
+              />
+              <Metric
+                label="派生结果 · 三年林奇比"
+                value={decimal(lynch.lynch_ratio)}
+                detail={lynchGradeLabels[lynch.absolute_grade]}
+              />
+              <Metric
+                label="林奇比正式市场百分位"
+                value={percentile(lynch.market_percentile)}
+                detail={`有效排名样本 ${lynch.percentile_universe_size} 只`}
+              />
+              <Metric label="林奇比输入 · 股息率" value={ratio(lynch.dividend_yield)} />
+              <Metric
+                label="公共底座状态"
+                value={coreDataStatusLabels[lynch.core_data_status]}
               />
             </div>
             <p className="fundamental-note">
@@ -616,6 +658,9 @@ function FundamentalDetail({
                     .join(" · ")
                 : "数据不足"}
               。财务基准日 {lynch.financial_as_of ?? "暂无"}。
+              {lynch.warnings.length > 0
+                ? ` 风险警告 ${lynch.warnings.length} 项。`
+                : " 暂无机械风险警告。"}
             </p>
           </>
         ) : (
@@ -647,7 +692,12 @@ function FundamentalDetail({
           )}
         </section>
       ) : (
-        <>
+        <details className="fundamental-enhancement">
+          <summary>
+            查看非核心增强信息
+            <span>月度历史、主营业务、资本行为、市值与讨论情绪</span>
+          </summary>
+          <div className="fundamental-enhancement__content">
           <section className="fundamental-pillar">
             <PillarHeader
               number="I·扩展"
@@ -885,7 +935,8 @@ function FundamentalDetail({
               当前机械输出保留五年复合增长率和正增长年度数，但未持久化五个年度的逐年每股收益序列；页面明确标记此契约缺口，不从摘要反推明细。
             </p>
           </section>
-        </>
+          </div>
+        </details>
       )}
     </section>
   );
@@ -1271,10 +1322,11 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
                 <thead>
                   <tr>
                     <th>股票</th>
-                    <th>三年林奇比</th>
-                    <th>绝对等级</th>
-                    <th>正式百分位</th>
-                    <th>月度 / 舆情</th>
+                    <th>三年增长</th>
+                    <th>扣非市盈率</th>
+                    <th>有息净负债率</th>
+                    <th>林奇比 / 百分位</th>
+                    <th>公共底座</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1289,19 +1341,17 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
                           <span>{item.code}</span>
                         </button>
                       </td>
-                      <td>{decimal(item.lynch?.lynch_ratio ?? null)}</td>
+                      <td>{ratio(item.lynch?.three_year_cagr ?? null)}</td>
+                      <td>{decimal(item.lynch?.adjusted_pe ?? null)}</td>
+                      <td>{ratio(item.lynch?.net_debt_to_equity ?? null)}</td>
                       <td>
-                        {item.lynch ? (
-                          <span className={`lynch-grade lynch-grade--${item.lynch.absolute_grade}`}>
-                            {lynchGradeLabels[item.lynch.absolute_grade]}
-                          </span>
-                        ) : "暂无"}
+                        {decimal(item.lynch?.lynch_ratio ?? null)} ·{" "}
+                        {percentile(item.lynch?.market_percentile ?? null)}
                       </td>
-                      <td>{percentile(item.lynch?.market_percentile ?? null)}</td>
                       <td>
-                        <span className={`fundamental-data-status fundamental-data-status--${item.data_status}`}>
-                          {dataStatusLabels[item.data_status]}
-                        </span>
+                        {item.lynch
+                          ? coreDataStatusLabels[item.lynch.core_data_status]
+                          : "当前批次无记录"}
                       </td>
                     </tr>
                   ))}
@@ -1330,7 +1380,7 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
               capitalActionState={capitalActionState}
             />
           ) : (
-            <section className="fundamental-page-state">请选择一只股票查看四支柱详情。</section>
+            <section className="fundamental-page-state">请选择一只股票查看林奇核心底座。</section>
           )}
         </div>
       )}

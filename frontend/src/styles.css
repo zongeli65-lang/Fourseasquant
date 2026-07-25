@@ -5125,21 +5125,30 @@ button:active {
     grid-column: span 6;
   }
 }
-.lynch-grade {
-  display: inline-flex;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: #e7e0d5;
-  font-size: 0.76rem;
+.fundamental-enhancement {
+  margin-top: 20px;
+  border: 1px solid #ded4c3;
+  border-radius: 16px;
+  background: #faf5ea;
 }
 
-.lynch-grade--exceptional,
-.lynch-grade--excellent {
-  background: #d9ead9;
-  color: #245d36;
+.fundamental-enhancement > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 22px;
+  cursor: pointer;
+  color: #332e27;
+  font-weight: 700;
 }
 
-.lynch-grade--earnings_contraction {
-  background: #f4d8ce;
-  color: #8d3d2b;
+.fundamental-enhancement > summary span {
+  color: #7b7061;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.fundamental-enhancement__content {
+  padding: 0 18px 18px;
 }

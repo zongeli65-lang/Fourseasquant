@@ -81,6 +81,22 @@ def financial_frame() -> pd.DataFrame:
     )
 
 
+def balance_frame(*, parent_equity: float = 1_000) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "REPORT_DATE": "2026-03-31",
+                "MONETARYFUNDS": 500,
+                "SHORT_LOAN": 100,
+                "LONG_LOAN": 200,
+                "BOND_PAYABLE": None,
+                "LEASE_LIAB": 10,
+                "TOTAL_PARENT_EQUITY": parent_equity,
+            }
+        ]
+    )
+
+
 def test_builds_three_year_and_ttm_values_without_future_disclosures() -> None:
     dividends = pd.DataFrame(
         [
@@ -94,6 +110,7 @@ def test_builds_three_year_and_ttm_values_without_future_disclosures() -> None:
         code="600000",
         as_of_date=date(2026, 7, 24),
         financial=financial_frame(),
+        balance_sheet=balance_frame(),
         dividends=dividends,
         audit_status="standard_unqualified",
         performance_forecast_blocked=False,
@@ -115,6 +132,8 @@ def test_builds_three_year_and_ttm_values_without_future_disclosures() -> None:
     assert result.ttm_adjusted_eps == pytest.approx(1.63)
     assert result.prior_ttm_adjusted_eps == pytest.approx(1.19)
     assert result.ttm_dividend_per_share == pytest.approx(0.35)
+    assert result.net_debt_to_equity == pytest.approx(-0.19)
+    assert result.financial_safety_status == "available"
 
 
 def test_missing_required_financial_columns_fails_explicitly() -> None:
@@ -123,6 +142,7 @@ def test_missing_required_financial_columns_fails_explicitly() -> None:
             code="600000",
             as_of_date=date(2026, 7, 24),
             financial=pd.DataFrame({"SECURITY_CODE": ["600000"]}),
+            balance_sheet=balance_frame(),
             dividends=pd.DataFrame(columns=["派息日", "派息比例"]),
             audit_status="unknown",
             performance_forecast_blocked=False,
@@ -136,6 +156,7 @@ def test_invalid_dividend_frame_is_not_silently_treated_as_zero() -> None:
             code="600000",
             as_of_date=date(2026, 7, 24),
             financial=financial_frame(),
+            balance_sheet=balance_frame(),
             dividends=pd.DataFrame(),
             audit_status="unknown",
             performance_forecast_blocked=False,
@@ -148,6 +169,7 @@ def test_bonus_only_row_without_cash_dividend_is_valid_zero() -> None:
         code="600000",
         as_of_date=date(2026, 7, 24),
         financial=financial_frame(),
+        balance_sheet=balance_frame(),
         dividends=pd.DataFrame(
             [{"派息日": "2026-06-20", "派息比例": None}]
         ),
@@ -157,3 +179,21 @@ def test_bonus_only_row_without_cash_dividend_is_valid_zero() -> None:
     )
 
     assert result.ttm_dividend_per_share == 0
+
+
+def test_nonpositive_parent_equity_is_explicitly_not_applicable() -> None:
+    result = build_lynch_financial_base_from_akshare(
+        code="600000",
+        as_of_date=date(2026, 7, 24),
+        financial=financial_frame(),
+        balance_sheet=balance_frame(parent_equity=-100),
+        dividends=pd.DataFrame(
+            [{"派息日": "2026-06-20", "派息比例": 1.0}]
+        ),
+        audit_status="unknown",
+        performance_forecast_blocked=False,
+        major_risk_blocked=False,
+    )
+
+    assert result.net_debt_to_equity is None
+    assert result.financial_safety_status == "invalid_equity"

@@ -8,6 +8,7 @@ import pandas as pd
 from fourseasquant.fundamental_lynch import (
     AnnualAdjustedEps,
     AuditStatus,
+    FinancialSafetyStatus,
     LynchFinancialBase,
 )
 
@@ -17,6 +18,10 @@ FINANCIAL_SOURCE_URL = (
     "NewFinanceAnalysis/Index"
 )
 DIVIDEND_SOURCE_URL = "https://webapi.cninfo.com.cn/#/company"
+BALANCE_SHEET_SOURCE_URL = (
+    "https://emweb.securities.eastmoney.com/PC_HSF10/"
+    "NewFinanceAnalysis/Index"
+)
 REQUIRED_FINANCIAL_COLUMNS = {
     "SECURITY_CODE",
     "SECURITY_NAME_ABBR",
@@ -26,6 +31,19 @@ REQUIRED_FINANCIAL_COLUMNS = {
     "EPSKCJB",
 }
 REQUIRED_DIVIDEND_COLUMNS = {"派息日", "派息比例"}
+REQUIRED_BALANCE_COLUMNS = {"REPORT_DATE", "TOTAL_PARENT_EQUITY"}
+_CASH_COLUMNS = ("MONETARYFUNDS", "CASH_DEPOSIT_PBC")
+_INTEREST_BEARING_DEBT_COLUMNS = (
+    "SHORT_LOAN",
+    "LONG_LOAN",
+    "BOND_PAYABLE",
+    "SHORT_BOND_PAYABLE",
+    "LEASE_LIAB",
+    "SHORT_FIN_PAYABLE",
+    "BORROW_FUND",
+    "DEPOSIT_INTERBANK",
+    "ACCEPT_DEPOSIT",
+)
 
 
 def build_lynch_financial_base_from_akshare(
@@ -33,6 +51,7 @@ def build_lynch_financial_base_from_akshare(
     code: str,
     as_of_date: date,
     financial: pd.DataFrame,
+    balance_sheet: pd.DataFrame,
     dividends: pd.DataFrame,
     audit_status: AuditStatus,
     performance_forecast_blocked: bool,
@@ -49,6 +68,13 @@ def build_lynch_financial_base_from_akshare(
     missing_dividend = REQUIRED_DIVIDEND_COLUMNS.difference(dividends.columns)
     if missing_dividend:
         raise ValueError(f"分红数据缺少字段: {sorted(missing_dividend)}")
+    missing_balance = REQUIRED_BALANCE_COLUMNS.difference(
+        balance_sheet.columns
+    )
+    if missing_balance:
+        raise ValueError(
+            f"资产负债表缺少字段: {sorted(missing_balance)}"
+        )
 
     eligible = financial.copy()
     eligible["_report_date"] = pd.to_datetime(
@@ -103,6 +129,10 @@ def build_lynch_financial_base_from_akshare(
     name = str(latest["SECURITY_NAME_ABBR"]).strip()
     if not name:
         raise ValueError("主要财务指标缺少股票简称")
+    net_debt_to_equity, safety_status = _net_debt_to_equity(
+        balance_sheet,
+        latest_report_date,
+    )
     return LynchFinancialBase(
         code=code,
         name=name,
@@ -115,12 +145,99 @@ def build_lynch_financial_base_from_akshare(
             dividends,
             as_of_date,
         ),
+        net_debt_to_equity=net_debt_to_equity,
+        financial_safety_status=safety_status,
         audit_status=audit_status,
         performance_forecast_blocked=performance_forecast_blocked,
         major_risk_blocked=major_risk_blocked,
         risk_reasons=list(risk_reasons or []),
-        source_urls=[FINANCIAL_SOURCE_URL, DIVIDEND_SOURCE_URL],
+        source_urls=[
+            FINANCIAL_SOURCE_URL,
+            BALANCE_SHEET_SOURCE_URL,
+            DIVIDEND_SOURCE_URL,
+        ],
     )
+
+
+def latest_eligible_financial_report_date(
+    financial: pd.DataFrame,
+    as_of_date: date,
+) -> date:
+    required = {"REPORT_DATE", "NOTICE_DATE", "EPSKCJB"}
+    missing = required.difference(financial.columns)
+    if missing:
+        raise ValueError(f"主要财务指标缺少字段: {sorted(missing)}")
+    report_dates = pd.to_datetime(
+        financial["REPORT_DATE"], errors="coerce"
+    ).dt.date
+    notice_dates = pd.to_datetime(
+        financial["NOTICE_DATE"], errors="coerce"
+    ).dt.date
+    adjusted_eps = pd.to_numeric(
+        financial["EPSKCJB"], errors="coerce"
+    )
+    eligible = report_dates[
+        report_dates.notna()
+        & notice_dates.notna()
+        & adjusted_eps.notna()
+        & (report_dates <= as_of_date)
+        & (notice_dates <= as_of_date)
+    ]
+    if eligible.empty:
+        raise ValueError("目标日期前没有已公告的扣非每股收益")
+    return eligible.max()
+
+
+def _net_debt_to_equity(
+    balance_sheet: pd.DataFrame,
+    report_date: date,
+) -> tuple[float | None, FinancialSafetyStatus]:
+    dates = pd.to_datetime(
+        balance_sheet["REPORT_DATE"], errors="coerce"
+    ).dt.date
+    rows = balance_sheet[dates == report_date]
+    if rows.empty:
+        raise ValueError(
+            f"资产负债表缺少 {report_date.isoformat()} 报告期"
+        )
+    row = rows.iloc[0]
+    cash = _first_reported_number(row, _CASH_COLUMNS)
+    equity = _first_reported_number(row, ("TOTAL_PARENT_EQUITY",))
+    if cash is None or equity is None:
+        raise ValueError("资产负债表缺少现金或归母净资产")
+    if equity <= 0:
+        return None, "invalid_equity"
+    debt_columns = [
+        column
+        for column in _INTEREST_BEARING_DEBT_COLUMNS
+        if column in balance_sheet.columns
+    ]
+    if not debt_columns:
+        raise ValueError("资产负债表缺少有息负债字段")
+    interest_bearing_debt = sum(
+        value
+        for column in debt_columns
+        if (value := _reported_number(row, column)) is not None
+    )
+    return (interest_bearing_debt - cash) / equity, "available"
+
+
+def _first_reported_number(
+    row: pd.Series,
+    columns: tuple[str, ...],
+) -> float | None:
+    for column in columns:
+        value = _reported_number(row, column)
+        if value is not None:
+            return value
+    return None
+
+
+def _reported_number(row: pd.Series, column: str) -> float | None:
+    if column not in row.index:
+        return None
+    value = pd.to_numeric(pd.Series([row[column]]), errors="coerce").iloc[0]
+    return None if pd.isna(value) else float(value)
 
 
 def _ttm_eps(values: dict[date, float], report_date: date) -> float:

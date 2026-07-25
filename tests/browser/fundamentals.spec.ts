@@ -156,9 +156,13 @@ const items = [
       ttm_adjusted_eps: 1.5,
       prior_ttm_adjusted_eps: 1.4,
       ttm_dividend_per_share: 0.2,
+      net_debt_to_equity: -0.15,
+      financial_safety_status: "available",
       three_year_cagr: 0.2,
+      growth_status: "continuous_growth",
       dividend_yield: 0.016,
       adjusted_pe: 8.33,
+      valuation_status: "applicable",
       lynch_ratio: 2.59,
       absolute_grade: "exceptional",
       warnings: [],
@@ -172,6 +176,7 @@ const items = [
       ranking_exclusion_reason: null,
       market_percentile: 92,
       percentile_universe_size: 2,
+      core_data_status: "complete",
     },
     monthly: {
       snapshot: completeSnapshot,
@@ -196,7 +201,7 @@ const items = [
   },
 ];
 
-test("用户可以筛选候选板块并查看四支柱基本面详情", async ({ page }) => {
+test("用户可以筛选候选板块并查看林奇核心底座与增强信息", async ({ page }) => {
   let capitalRetryRequested = false;
   await page.route("**/api/fundamentals/overview?*", async (route) => {
     const url = new URL(route.request().url());
@@ -340,7 +345,9 @@ test("用户可以筛选候选板块并查看四支柱基本面详情", async ({
   await expect(page.getByText("资本行为采集", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "重新运行今日基本面任务" }).click();
   await expect.poll(() => capitalRetryRequested).toBe(true);
-  await expect(page.getByRole("heading", { name: "三年林奇比" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "林奇核心底座" })).toBeVisible();
+  await expect(page.getByText("公共底座完整", { exact: true }).first()).toBeVisible();
+  await page.locator(".fundamental-enhancement > summary").click();
   await expect(page.getByRole("heading", { name: "主营业务" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "流通市值" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "讨论热度与情绪" })).toBeVisible();
@@ -363,6 +370,7 @@ test("用户可以筛选候选板块并查看四支柱基本面详情", async ({
   await page.getByRole("button", { name: /平安银行/ }).click();
 
   await expect(page.getByRole("heading", { name: /平安银行/ })).toBeVisible();
+  await page.locator(".fundamental-enhancement > summary").click();
   await expect(
     page.locator(".fundamental-metric").filter({ hasText: "调整后滚动市盈率" }),
   ).toContainText("不适用");

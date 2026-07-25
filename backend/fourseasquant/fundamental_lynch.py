@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-LYNCH_RULES_VERSION = "lynch-market-v1"
+LYNCH_RULES_VERSION = "lynch-core-v2"
 AuditStatus = Literal[
     "standard_unqualified",
     "emphasis_of_matter",
@@ -49,6 +49,25 @@ LynchWarning = Literal[
     "ttm_earnings_deteriorated_above_30_percent",
     "ttm_earnings_deteriorated_above_50_percent",
 ]
+GrowthStatus = Literal[
+    "continuous_growth",
+    "non_continuous_growth",
+    "earnings_contraction",
+    "loss_or_nonpositive",
+    "insufficient_data",
+]
+ValuationStatus = Literal[
+    "applicable",
+    "loss_making",
+    "invalid_price",
+    "insufficient_data",
+]
+FinancialSafetyStatus = Literal["available", "invalid_equity", "insufficient_data"]
+CoreDataStatus = Literal[
+    "complete",
+    "economic_not_applicable",
+    "source_missing",
+]
 
 
 class AnnualAdjustedEps(BaseModel):
@@ -66,6 +85,8 @@ class LynchFinancialBase(BaseModel):
     ttm_adjusted_eps: float | None
     prior_ttm_adjusted_eps: float | None
     ttm_dividend_per_share: float = Field(ge=0)
+    net_debt_to_equity: float | None = None
+    financial_safety_status: FinancialSafetyStatus = "insufficient_data"
     audit_status: AuditStatus = "unknown"
     performance_forecast_blocked: bool = False
     major_risk_blocked: bool = False
@@ -86,9 +107,13 @@ class LynchDailyResult(BaseModel):
     ttm_adjusted_eps: float | None
     prior_ttm_adjusted_eps: float | None
     ttm_dividend_per_share: float
+    net_debt_to_equity: float | None
+    financial_safety_status: FinancialSafetyStatus
     three_year_cagr: float | None
+    growth_status: GrowthStatus
     dividend_yield: float | None
     adjusted_pe: float | None
+    valuation_status: ValuationStatus
     lynch_ratio: float | None
     absolute_grade: LynchAbsoluteGrade
     warnings: list[LynchWarning]
@@ -102,6 +127,7 @@ class LynchDailyResult(BaseModel):
     ranking_exclusion_reason: LynchRankingExclusionReason | None
     market_percentile: float | None = None
     percentile_universe_size: int = 0
+    core_data_status: CoreDataStatus
 
 
 def calculate_lynch_daily_result(
@@ -136,6 +162,17 @@ def calculate_lynch_daily_result(
         prior_ttm_adjusted_eps=financial.prior_ttm_adjusted_eps,
     )
     exclusion = _ranking_exclusion_reason(financial, calculable=calculable)
+    growth_status = _growth_status(annual)
+    valuation_status = _valuation_status(
+        financial.ttm_adjusted_eps,
+        close,
+    )
+    core_data_status = _core_data_status(
+        annual=annual,
+        ttm_adjusted_eps=financial.ttm_adjusted_eps,
+        close=close,
+        financial_safety_status=financial.financial_safety_status,
+    )
     return LynchDailyResult(
         target_date=target_date,
         code=financial.code,
@@ -147,9 +184,13 @@ def calculate_lynch_daily_result(
         ttm_adjusted_eps=financial.ttm_adjusted_eps,
         prior_ttm_adjusted_eps=financial.prior_ttm_adjusted_eps,
         ttm_dividend_per_share=financial.ttm_dividend_per_share,
+        net_debt_to_equity=financial.net_debt_to_equity,
+        financial_safety_status=financial.financial_safety_status,
         three_year_cagr=cagr,
+        growth_status=growth_status,
         dividend_yield=dividend_yield,
         adjusted_pe=adjusted_pe,
+        valuation_status=valuation_status,
         lynch_ratio=ratio,
         absolute_grade=_absolute_grade(ratio),
         warnings=warnings,
@@ -161,6 +202,7 @@ def calculate_lynch_daily_result(
         risk_reasons=list(financial.risk_reasons),
         ranking_eligible=exclusion is None,
         ranking_exclusion_reason=exclusion,
+        core_data_status=core_data_status,
     )
 
 
@@ -279,6 +321,65 @@ def _absolute_grade(ratio: float | None) -> LynchAbsoluteGrade:
     return "earnings_contraction"
 
 
+def _growth_status(annual: list[AnnualAdjustedEps]) -> GrowthStatus:
+    if len(annual) != 3 or [
+        item.year for item in annual
+    ] != list(range(annual[0].year, annual[0].year + 3)):
+        return "insufficient_data"
+    if any(item.value <= 0 for item in annual):
+        return "loss_or_nonpositive"
+    changes = [
+        current.value - previous.value
+        for previous, current in zip(annual, annual[1:], strict=False)
+    ]
+    if all(change > 0 for change in changes):
+        return "continuous_growth"
+    if annual[-1].value < annual[0].value:
+        return "earnings_contraction"
+    return "non_continuous_growth"
+
+
+def _valuation_status(
+    ttm_adjusted_eps: float | None,
+    close: float,
+) -> ValuationStatus:
+    if close <= 0:
+        return "invalid_price"
+    if ttm_adjusted_eps is None:
+        return "insufficient_data"
+    if ttm_adjusted_eps <= 0:
+        return "loss_making"
+    return "applicable"
+
+
+def _core_data_status(
+    *,
+    annual: list[AnnualAdjustedEps],
+    ttm_adjusted_eps: float | None,
+    close: float,
+    financial_safety_status: FinancialSafetyStatus,
+) -> CoreDataStatus:
+    has_three_consecutive_years = (
+        len(annual) == 3
+        and [item.year for item in annual]
+        == list(range(annual[0].year, annual[0].year + 3))
+    )
+    if (
+        not has_three_consecutive_years
+        or ttm_adjusted_eps is None
+        or close <= 0
+        or financial_safety_status == "insufficient_data"
+    ):
+        return "source_missing"
+    if (
+        any(item.value <= 0 for item in annual)
+        or ttm_adjusted_eps <= 0
+        or financial_safety_status == "invalid_equity"
+    ):
+        return "economic_not_applicable"
+    return "complete"
+
+
 def _ranking_exclusion_reason(
     financial: LynchFinancialBase,
     *,
@@ -286,10 +387,4 @@ def _ranking_exclusion_reason(
 ) -> LynchRankingExclusionReason | None:
     if not calculable:
         return "not_calculable"
-    if financial.audit_status != "standard_unqualified":
-        return "audit_not_standard_unqualified"
-    if financial.performance_forecast_blocked:
-        return "performance_forecast_risk"
-    if financial.major_risk_blocked:
-        return "major_public_risk"
     return None
