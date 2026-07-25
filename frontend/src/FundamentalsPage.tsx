@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { LynchMarketPanel } from "./LynchMarketPanel";
 
 type BoardCandidateMember = {
   code: string;
@@ -169,6 +168,7 @@ type OverviewItem = {
   code: string;
   name: string;
   board_ids: string[];
+  lynch: LynchItem | null;
   monthly: MonthlyRecord | null;
   discussion: DiscussionDay | null;
   data_status: "complete" | "partial" | "no_data";
@@ -181,6 +181,12 @@ type FundamentalOverview = {
   board_complete: boolean | null;
   boards: BoardCandidate[];
   selected_board_id: string | null;
+  lynch_actual_data_date: string | null;
+  lynch_financial_base_date: string | null;
+  lynch_published_at: string | null;
+  lynch_total_count: number;
+  lynch_calculable_count: number;
+  lynch_ranking_eligible_count: number;
   total: number;
   limit: number;
   offset: number;
@@ -197,6 +203,48 @@ type DiscussionSeries = {
   days: DiscussionDay[];
 };
 
+type AnnualAdjustedEps = {
+  year: number;
+  value: number;
+};
+
+type LynchGrade =
+  | "exceptional"
+  | "excellent"
+  | "reasonable"
+  | "weak"
+  | "earnings_contraction"
+  | "insufficient_data";
+
+type LynchItem = {
+  target_date: string;
+  code: string;
+  name: string;
+  close: number;
+  financial_as_of: string | null;
+  latest_notice_date: string | null;
+  annual_adjusted_eps: AnnualAdjustedEps[];
+  ttm_adjusted_eps: number | null;
+  prior_ttm_adjusted_eps: number | null;
+  ttm_dividend_per_share: number;
+  three_year_cagr: number | null;
+  dividend_yield: number | null;
+  adjusted_pe: number | null;
+  lynch_ratio: number | null;
+  absolute_grade: LynchGrade;
+  warnings: string[];
+  calculable: boolean;
+  unavailable_reason: string | null;
+  audit_status: string;
+  performance_forecast_blocked: boolean;
+  major_risk_blocked: boolean;
+  risk_reasons: string[];
+  ranking_eligible: boolean;
+  ranking_exclusion_reason: string | null;
+  market_percentile: number | null;
+  percentile_universe_size: number;
+};
+
 type LoadState<T> =
   | { kind: "loading" }
   | { kind: "ready"; data: T }
@@ -207,6 +255,8 @@ type SortField =
   | "floating_market_cap_percentile"
   | "adjusted_pe"
   | "lynch_growth_value_ratio"
+  | "lynch_ratio"
+  | "lynch_market_percentile"
   | "true_money_signal_score"
   | "heat_percentile"
   | "weighted_sentiment";
@@ -224,6 +274,15 @@ const lynchLabels: Record<MonthlySnapshot["lynch_growth_value_label"], string> =
   acceptable: "可以接受",
   good: "良好",
   not_applicable: "不适用",
+};
+
+const lynchGradeLabels: Record<LynchGrade, string> = {
+  exceptional: "卓越",
+  excellent: "优秀",
+  reasonable: "合理",
+  weak: "偏弱",
+  earnings_contraction: "盈利收缩",
+  insufficient_data: "数据不足",
 };
 
 const dataStatusLabels: Record<OverviewItem["data_status"], string> = {
@@ -481,6 +540,7 @@ function FundamentalDetail({
   capitalActionState: LoadState<CapitalActionEvidence>;
 }) {
   const latest = item.monthly?.snapshot ?? null;
+  const lynch = item.lynch;
   const discussion = item.discussion;
   const monthlyHistory =
     monthlyState.kind === "ready" ? monthlyState.data.records : [];
@@ -500,6 +560,8 @@ function FundamentalDetail({
           </p>
         </div>
         <div className="fundamental-detail__dates">
+          <span>三年林奇行情</span>
+          <strong>{lynch?.target_date ?? "暂无数据"}</strong>
           <span>月度快照</span>
           <strong>{latest?.as_of_date ?? "暂无数据"}</strong>
           <span>舆情日期</span>
@@ -507,11 +569,67 @@ function FundamentalDetail({
         </div>
       </header>
 
+      <section className="fundamental-pillar">
+        <PillarHeader
+          number="I"
+          title="三年林奇比"
+          description="该股票在全量基本面股票库中的日频字段；板块只改变筛选范围，不生成另一套结果。"
+        />
+        {lynch ? (
+          <>
+            <div className="fundamental-metric-grid">
+              <Metric label="三年林奇比" value={decimal(lynch.lynch_ratio)} />
+              <Metric
+                label="绝对等级"
+                value={lynchGradeLabels[lynch.absolute_grade]}
+              />
+              <Metric
+                label="正式市场百分位"
+                value={percentile(lynch.market_percentile)}
+                detail={
+                  lynch.ranking_eligible
+                    ? `排名样本 ${lynch.percentile_universe_size} 只`
+                    : "证据闸门未通过，不进入正式排名"
+                }
+              />
+              <Metric
+                label="三年扣非每股收益复合增长"
+                value={ratio(lynch.three_year_cagr)}
+              />
+              <Metric label="扣非市盈率" value={decimal(lynch.adjusted_pe)} />
+              <Metric label="股息率" value={ratio(lynch.dividend_yield)} />
+              <Metric label="收盘价" value={decimal(lynch.close)} />
+              <Metric
+                label="审计证据"
+                value={
+                  lynch.audit_status === "unknown"
+                    ? "待确认"
+                    : lynch.audit_status
+                }
+              />
+            </div>
+            <p className="fundamental-note">
+              年度扣非每股收益：
+              {lynch.annual_adjusted_eps.length > 0
+                ? lynch.annual_adjusted_eps
+                    .map((entry) => `${entry.year} 年 ${decimal(entry.value)}`)
+                    .join(" · ")
+                : "数据不足"}
+              。财务基准日 {lynch.financial_as_of ?? "暂无"}。
+            </p>
+          </>
+        ) : (
+          <p className="fundamental-inline-empty">
+            当前完整发布批次中没有该股票的三年林奇结果。
+          </p>
+        )}
+      </section>
+
       {!latest ? (
         <section className="fundamental-detail-empty">
           <h3>尚无个股月度基本面快照</h3>
           <p>
-            该股票可能只存在于候选板块，或者真实财务采集和月度计算尚未完成。空值不会被当作 0。
+            该股票已有全量林奇记录，但真实月度财务采集和计算可能尚未完成。空值不会被当作 0。
           </p>
           {discussion && (
             <div className="fundamental-discussion-only">
@@ -532,9 +650,9 @@ function FundamentalDetail({
         <>
           <section className="fundamental-pillar">
             <PillarHeader
-              number="I"
-              title="彼得·林奇机械数据"
-              description="估值、增长、现金负债、股息、现金流与资本行为分项。"
+              number="I·扩展"
+              title="月度基本面历史字段"
+              description="五年历史契约、现金负债、股息、现金流与资本行为分项。"
             />
             <div className="fundamental-metric-grid">
               <Metric label="普通滚动市盈率" value={decimal(latest.ordinary_pe)} />
@@ -553,7 +671,7 @@ function FundamentalDetail({
                 detail={`正增长年度 ${latest.positive_growth_years} 个`}
               />
               <Metric
-                label="林奇增长估值比"
+                label="旧五年机械比（历史契约）"
                 value={decimal(latest.lynch_growth_value_ratio)}
                 detail={lynchLabels[latest.lynch_growth_value_label]}
               />
@@ -1000,30 +1118,29 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
           <p className="section-kicker">独立证据体系 · 纯机械化</p>
           <h2>个人基本面分析</h2>
           <p>
-            候选板块用于发现股票；月度财务、流通市值与每日讨论分别展示，不合成基本面总分。
+            全量股票共用一套基本面记录；三年林奇比是个股字段，板块与概念仅用于筛选。
+            月度财务、流通市值与每日讨论仍独立展示，不合成基本面总分。
           </p>
         </div>
         <dl>
           <div>
-            <dt>候选池日期</dt>
-            <dd>{overview?.board_effective_date ?? "尚未初始化"}</dd>
+            <dt>林奇行情日期</dt>
+            <dd>{overview?.lynch_actual_data_date ?? "尚未初始化"}</dd>
           </div>
           <div>
-            <dt>候选板块</dt>
-            <dd>{overview?.boards.length ?? 0}</dd>
+            <dt>全量股票</dt>
+            <dd>{overview?.lynch_total_count ?? 0} 只</dd>
           </div>
           <div>
-            <dt>当前结果</dt>
-            <dd>{overview?.total ?? 0} 只</dd>
+            <dt>三年林奇可计算</dt>
+            <dd>{overview?.lynch_calculable_count ?? 0} 只</dd>
           </div>
           <div>
-            <dt>页面目标日期</dt>
-            <dd>{targetDate}</dd>
+            <dt>板块与概念筛选</dt>
+            <dd>{overview?.boards.length ?? 0} 个</dd>
           </div>
         </dl>
       </section>
-
-      <LynchMarketPanel targetDate={targetDate} />
 
       {capitalStatusState.kind === "ready" &&
         capitalStatusState.data.status === "failed" && (
@@ -1068,12 +1185,12 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
 
       <section className="fundamental-controls" aria-label="基本面筛选">
         <label>
-          <span>候选板块</span>
+          <span>板块与概念筛选</span>
           <select
             value={selectedBoard}
             onChange={(event) => setSelectedBoard(event.target.value)}
           >
-            <option value="">全部候选股票</option>
+            <option value="">全部股票</option>
             {overview?.boards.map((board) => (
               <option key={board.board_id} value={board.board_id}>
                 {board.kind === "industry" ? "行业" : "概念"} · {board.name} · {board.members.length} 只
@@ -1102,7 +1219,9 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
             <option value="code">股票代码</option>
             <option value="floating_market_cap_percentile">流通市值百分位</option>
             <option value="adjusted_pe">调整后市盈率</option>
-            <option value="lynch_growth_value_ratio">林奇增长估值比</option>
+            <option value="lynch_ratio">三年林奇比</option>
+            <option value="lynch_market_percentile">三年林奇正式百分位</option>
+            <option value="lynch_growth_value_ratio">旧五年机械比</option>
             <option value="true_money_signal_score">真金白银信号分</option>
             <option value="heat_percentile">综合热度百分位</option>
             <option value="weighted_sentiment">综合情绪</option>
@@ -1128,7 +1247,7 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
         <section className="fundamental-page-state">
           <h2>尚无可展示的基本面结果</h2>
           <p>
-            请先导入完整候选板块或运行真实月度基本面任务。页面不会使用模拟数据填充正式结论。
+            请先运行全量三年林奇任务或其他真实基本面任务。页面不会使用模拟数据填充正式结论。
           </p>
         </section>
       ) : (
@@ -1136,13 +1255,13 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
           <aside className="fundamental-universe" aria-labelledby="fundamental-universe-title">
             <header>
               <div>
-                <p className="section-kicker">板块候选池</p>
+                <p className="section-kicker">全量基本面股票库 · 板块筛选</p>
                 <h2 id="fundamental-universe-title">
                   {overviewState.data.selected_board_id
                     ? overviewState.data.boards.find(
                         (board) => board.board_id === overviewState.data.selected_board_id,
-                      )?.name ?? "候选股票"
-                    : "全部候选股票"}
+                      )?.name ?? "筛选结果"
+                    : "全部股票"}
                 </h2>
               </div>
               <span>{overviewState.data.total} 只</span>
@@ -1152,10 +1271,10 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
                 <thead>
                   <tr>
                     <th>股票</th>
-                    <th>月度日期</th>
-                    <th>林奇比</th>
-                    <th>热度</th>
-                    <th>数据状态</th>
+                    <th>三年林奇比</th>
+                    <th>绝对等级</th>
+                    <th>正式百分位</th>
+                    <th>月度 / 舆情</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1170,9 +1289,15 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
                           <span>{item.code}</span>
                         </button>
                       </td>
-                      <td>{item.monthly?.snapshot.as_of_date ?? "暂无"}</td>
-                      <td>{decimal(item.monthly?.snapshot.lynch_growth_value_ratio ?? null)}</td>
-                      <td>{percentile(item.discussion?.combined?.heat_percentile ?? null)}</td>
+                      <td>{decimal(item.lynch?.lynch_ratio ?? null)}</td>
+                      <td>
+                        {item.lynch ? (
+                          <span className={`lynch-grade lynch-grade--${item.lynch.absolute_grade}`}>
+                            {lynchGradeLabels[item.lynch.absolute_grade]}
+                          </span>
+                        ) : "暂无"}
+                      </td>
+                      <td>{percentile(item.lynch?.market_percentile ?? null)}</td>
                       <td>
                         <span className={`fundamental-data-status fundamental-data-status--${item.data_status}`}>
                           {dataStatusLabels[item.data_status]}
@@ -1185,13 +1310,15 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
             </div>
             <footer>
               <span>
-                来源 ·{" "}
+                板块来源 ·{" "}
                 {overviewState.data.board_source
                   ? (boardSourceLabels[overviewState.data.board_source] ??
                     overviewState.data.board_source)
-                  : "暂无候选池"}
+                  : "暂无分类快照"}
               </span>
-              <span>采集 · {beijingDateTime(overviewState.data.board_collected_at)}</span>
+              <span>
+                林奇发布 · {beijingDateTime(overviewState.data.lynch_published_at)}
+              </span>
             </footer>
           </aside>
 

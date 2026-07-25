@@ -22,6 +22,10 @@ from fourseasquant.fundamental_mechanical import (
     PersonalFundamentalMonthlySnapshot,
     RULES_VERSION,
 )
+from fourseasquant.fundamental_lynch import LynchDailyResult
+from fourseasquant.fundamental_lynch_repository import (
+    read_latest_published_lynch_daily_batch,
+)
 from fourseasquant.fundamental_repository import (
     read_latest_capital_action_batch,
     read_latest_fundamental_update_attempt,
@@ -38,6 +42,8 @@ OverviewSortField = Literal[
     "floating_market_cap_percentile",
     "adjusted_pe",
     "lynch_growth_value_ratio",
+    "lynch_ratio",
+    "lynch_market_percentile",
     "true_money_signal_score",
     "discussion_date",
     "heat_percentile",
@@ -105,6 +111,7 @@ class FundamentalOverviewItem(BaseModel):
     code: str
     name: str
     board_ids: list[str]
+    lynch: LynchDailyResult | None
     monthly: MonthlyFundamentalRecord | None
     discussion: DiscussionDayView | None
     data_status: FundamentalDataStatus
@@ -117,6 +124,12 @@ class FundamentalOverview(BaseModel):
     board_complete: bool | None
     boards: list[BoardCandidate]
     selected_board_id: str | None
+    lynch_actual_data_date: date | None
+    lynch_financial_base_date: date | None
+    lynch_published_at: datetime | None
+    lynch_total_count: int
+    lynch_calculable_count: int
+    lynch_ranking_eligible_count: int
     total: int
     limit: int
     offset: int
@@ -550,9 +563,17 @@ def read_fundamental_overview(
     limit: int = 50,
     offset: int = 0,
 ) -> FundamentalOverview:
+    resolved_target_date = target_date or date.today()
     publication = read_latest_board_candidate_publication(
         path,
         target_date=target_date,
+    )
+    lynch_publication = read_latest_published_lynch_daily_batch(
+        path,
+        resolved_target_date,
+    )
+    lynch_by_code = (
+        lynch_publication.results if lynch_publication is not None else {}
     )
     boards = publication.snapshot.boards if publication else []
     selected_board = (
@@ -577,9 +598,15 @@ def read_fundamental_overview(
         for member in board.members:
             name_by_code.setdefault(member.code, member.name)
             boards_by_code.setdefault(member.code, set()).add(board.board_id)
+    for code, result in lynch_by_code.items():
+        name_by_code[code] = result.name
 
     if selected_board is not None:
         codes = {member.code for member in selected_board.members}
+        if lynch_publication is not None:
+            codes.intersection_update(lynch_by_code)
+    elif lynch_publication is not None:
+        codes = set(lynch_by_code)
     else:
         codes = set(name_by_code)
         codes.update(_stored_fundamental_codes(path, target_date=target_date))
@@ -607,6 +634,7 @@ def read_fundamental_overview(
             code,
             name=name_by_code.get(code, code),
             board_ids=sorted(boards_by_code.get(code, set())),
+            lynch=lynch_by_code.get(code),
             monthly=monthly_by_code.get(code),
             discussion=discussion_by_code.get(code),
         )
@@ -635,6 +663,24 @@ def read_fundamental_overview(
         board_complete=publication.snapshot.complete if publication else None,
         boards=boards,
         selected_board_id=selected_board.board_id if selected_board else None,
+        lynch_actual_data_date=(
+            lynch_publication.target_date if lynch_publication else None
+        ),
+        lynch_financial_base_date=(
+            lynch_publication.financial_base_date
+            if lynch_publication
+            else None
+        ),
+        lynch_published_at=(
+            lynch_publication.published_at if lynch_publication else None
+        ),
+        lynch_total_count=len(lynch_by_code),
+        lynch_calculable_count=sum(
+            item.calculable for item in lynch_by_code.values()
+        ),
+        lynch_ranking_eligible_count=sum(
+            item.ranking_eligible for item in lynch_by_code.values()
+        ),
         total=len(items),
         limit=limit,
         offset=offset,
@@ -689,6 +735,7 @@ def _overview_item(
     *,
     name: str,
     board_ids: list[str],
+    lynch: LynchDailyResult | None,
     monthly: MonthlyFundamentalRecord | None,
     discussion: DiscussionDayView | None,
 ) -> FundamentalOverviewItem:
@@ -704,6 +751,7 @@ def _overview_item(
         code=code,
         name=name,
         board_ids=board_ids,
+        lynch=lynch,
         monthly=monthly,
         discussion=discussion,
         data_status=status,
@@ -715,6 +763,7 @@ def _overview_sort_value(
     sort_by: OverviewSortField,
 ) -> str | float | date | None:
     monthly = item.monthly.snapshot if item.monthly else None
+    lynch = item.lynch
     combined = item.discussion.combined if item.discussion else None
     values: dict[OverviewSortField, str | float | date | None] = {
         "code": item.code,
@@ -727,6 +776,10 @@ def _overview_sort_value(
         "adjusted_pe": monthly.adjusted_pe if monthly else None,
         "lynch_growth_value_ratio": (
             monthly.lynch_growth_value_ratio if monthly else None
+        ),
+        "lynch_ratio": lynch.lynch_ratio if lynch else None,
+        "lynch_market_percentile": (
+            lynch.market_percentile if lynch else None
         ),
         "true_money_signal_score": (
             monthly.true_money_signal_score if monthly else None

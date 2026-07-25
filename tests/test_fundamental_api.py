@@ -28,6 +28,13 @@ from fourseasquant.fundamental_mechanical import (
     CapitalActionSignal,
     PersonalFundamentalMonthlySnapshot,
 )
+from fourseasquant.fundamental_lynch import (
+    AnnualAdjustedEps,
+    LynchFinancialBase,
+    calculate_lynch_daily_result,
+    rank_lynch_results,
+)
+from fourseasquant.fundamental_lynch_repository import save_lynch_daily_batch
 from fourseasquant.fundamental_automation import FundamentalAutomationOutcome
 from fourseasquant.fundamental_repository import (
     FundamentalUpdateAttempt,
@@ -585,6 +592,89 @@ def test_fundamental_overview_filters_searches_sorts_and_preserves_missing_data(
     assert partial.json()["eastmoney_guba"] is not None
     assert partial.json()["xueqiu"] is None
     assert partial.json()["combined"] is None
+
+
+def test_fundamental_overview_contains_lynch_results_and_uses_boards_as_filter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "fundamental-unified-overview.db"
+    monkeypatch.setenv("FOURSEASQUANT_DB_PATH", str(database))
+    _seed_fundamentals(database)
+    target = date(2026, 7, 24)
+    calculated_at = datetime(2026, 7, 24, 16, 31, tzinfo=BEIJING)
+    results = rank_lynch_results(
+        [
+            calculate_lynch_daily_result(
+                LynchFinancialBase(
+                    code=code,
+                    name=name,
+                    financial_as_of=date(2025, 12, 31),
+                    latest_notice_date=None,
+                    annual_adjusted_eps=[
+                        AnnualAdjustedEps(year=2023, value=1.0),
+                        AnnualAdjustedEps(year=2024, value=1.2),
+                        AnnualAdjustedEps(year=2025, value=1.44),
+                    ],
+                    ttm_adjusted_eps=1.5,
+                    prior_ttm_adjusted_eps=1.4,
+                    ttm_dividend_per_share=0.2,
+                    audit_status="standard_unqualified",
+                ),
+                target_date=target,
+                close=close,
+            )
+            for code, name, close in [
+                ("600000", "浦发银行", 10.0),
+                ("300001", "特锐德", 20.0),
+            ]
+        ]
+    )
+    save_lynch_daily_batch(
+        database,
+        target_date=target,
+        financial_base_date=target,
+        expected_codes=["600000", "300001"],
+        results=results,
+        errors={},
+        calculated_at=calculated_at,
+    )
+
+    with TestClient(app) as client:
+        all_stocks = client.get(
+            "/api/fundamentals/overview",
+            params={
+                "target_date": target.isoformat(),
+                "sort_by": "lynch_ratio",
+                "sort_order": "desc",
+                "limit": 100,
+            },
+        )
+        board_filter = client.get(
+            "/api/fundamentals/overview",
+            params={
+                "target_date": target.isoformat(),
+                "board_code": "BK001",
+                "limit": 100,
+            },
+        )
+
+    assert all_stocks.status_code == 200
+    payload = all_stocks.json()
+    assert payload["lynch_total_count"] == 2
+    assert payload["lynch_calculable_count"] == 2
+    assert payload["lynch_actual_data_date"] == "2026-07-24"
+    by_code = {item["code"]: item for item in payload["items"]}
+    assert by_code["300001"]["name"] == "特锐德"
+    assert by_code["300001"]["lynch"]["lynch_ratio"] is not None
+    assert "em:industry:BK001" in by_code["600000"]["board_ids"]
+    assert board_filter.status_code == 200
+    assert board_filter.json()["total"] == 1
+    filtered_codes = {
+        item["code"] for item in board_filter.json()["items"]
+    }
+    assert "600000" in filtered_codes
+    assert "300001" not in filtered_codes
 
 
 def test_fundamental_endpoints_return_clear_empty_and_validation_states(

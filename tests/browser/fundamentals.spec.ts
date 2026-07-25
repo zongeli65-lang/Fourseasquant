@@ -141,6 +141,38 @@ const items = [
     code: "600000",
     name: "浦发银行",
     board_ids: ["em:industry:BK001"],
+    lynch: {
+      target_date: "2026-07-24",
+      code: "600000",
+      name: "浦发银行",
+      close: 12.5,
+      financial_as_of: "2026-03-31",
+      latest_notice_date: null,
+      annual_adjusted_eps: [
+        { year: 2023, value: 1 },
+        { year: 2024, value: 1.2 },
+        { year: 2025, value: 1.44 },
+      ],
+      ttm_adjusted_eps: 1.5,
+      prior_ttm_adjusted_eps: 1.4,
+      ttm_dividend_per_share: 0.2,
+      three_year_cagr: 0.2,
+      dividend_yield: 0.016,
+      adjusted_pe: 8.33,
+      lynch_ratio: 2.59,
+      absolute_grade: "exceptional",
+      warnings: [],
+      calculable: true,
+      unavailable_reason: null,
+      audit_status: "standard_unqualified",
+      performance_forecast_blocked: false,
+      major_risk_blocked: false,
+      risk_reasons: [],
+      ranking_eligible: true,
+      ranking_exclusion_reason: null,
+      market_percentile: 92,
+      percentile_universe_size: 2,
+    },
     monthly: {
       snapshot: completeSnapshot,
       source_urls: ["https://www.cninfo.com.cn/report-1"],
@@ -153,6 +185,7 @@ const items = [
     code: "000001",
     name: "平安银行",
     board_ids: ["em:industry:BK001"],
+    lynch: null,
     monthly: {
       snapshot: partialSnapshot,
       source_urls: [],
@@ -181,6 +214,12 @@ test("用户可以筛选候选板块并查看四支柱基本面详情", async ({
         board_complete: true,
         boards,
         selected_board_id: url.searchParams.get("board_code"),
+        lynch_actual_data_date: "2026-07-24",
+        lynch_financial_base_date: "2026-07-24",
+        lynch_published_at: "2026-07-24T16:31:00+08:00",
+        lynch_total_count: 2,
+        lynch_calculable_count: 1,
+        lynch_ranking_eligible_count: 1,
         total: filtered.length,
         limit: 100,
         offset: 0,
@@ -301,7 +340,7 @@ test("用户可以筛选候选板块并查看四支柱基本面详情", async ({
   await expect(page.getByText("资本行为采集", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "重新运行今日基本面任务" }).click();
   await expect.poll(() => capitalRetryRequested).toBe(true);
-  await expect(page.getByRole("heading", { name: "彼得·林奇机械数据" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "三年林奇比" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "主营业务" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "流通市值" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "讨论热度与情绪" })).toBeVisible();
@@ -315,7 +354,7 @@ test("用户可以筛选候选板块并查看四支柱基本面详情", async ({
   );
   await expect(page.getByText("12.5万元")).toBeVisible();
 
-  await page.getByLabel("候选板块").selectOption("em:industry:BK001");
+  await page.getByLabel("板块与概念筛选").selectOption("em:industry:BK001");
   await expect(page.getByRole("heading", { name: "银行", exact: true })).toBeVisible();
 
   await page.getByLabel("股票搜索").fill("平安");

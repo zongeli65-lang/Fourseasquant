@@ -116,7 +116,7 @@ const pages: PageDefinition[] = [
     label: "基本面",
     shortLabel: "05",
     title: "个人基本面分析",
-    description: "候选板块、月度四支柱与每日讨论热度。",
+    description: "全量基本面股票库、板块筛选与个股独立证据。",
   },
   {
     path: "/tasks",
