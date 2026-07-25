@@ -81,6 +81,15 @@ from fourseasquant.fundamental_queries import (
     read_latest_monthly_fundamental,
     read_monthly_fundamental_series,
 )
+from fourseasquant.fundamental_lynch_queries import (
+    LynchMarketOverview,
+    LynchSortField,
+    read_lynch_market_overview,
+)
+from fourseasquant.fundamental_lynch_automation import (
+    LynchAutomationOutcome,
+    run_scheduled_lynch_update,
+)
 from fourseasquant.review_notes import (
     ReviewResponse,
     ReviewWriteRequest,
@@ -515,6 +524,44 @@ def fundamental_overview(
         )
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/fundamentals/lynch/overview",
+    response_model=LynchMarketOverview,
+)
+def lynch_market_overview(
+    target_date: date,
+    search: str = Query(default="", max_length=40),
+    sort_by: LynchSortField = "market_percentile",
+    sort_order: SortOrder = "desc",
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> LynchMarketOverview:
+    try:
+        return read_lynch_market_overview(
+            database_path(),
+            target_date=target_date,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post(
+    "/api/fundamentals/lynch/retry",
+    response_model=LynchAutomationOutcome,
+    status_code=201,
+)
+def retry_lynch_market_update(request: DailyTaskRequest) -> LynchAutomationOutcome:
+    return run_scheduled_lynch_update(
+        target_date=request.target_date,
+        force=True,
+    )
 
 
 @app.post("/api/tasks/daily", response_model=TaskRunResponse, status_code=201)

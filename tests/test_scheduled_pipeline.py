@@ -8,6 +8,7 @@ from pytest import MonkeyPatch
 import fourseasquant.scheduled_pipeline as pipeline
 from fourseasquant.automation import AutomationOutcome
 from fourseasquant.fundamental_automation import FundamentalAutomationOutcome
+from fourseasquant.fundamental_lynch_automation import LynchAutomationOutcome
 
 
 def test_combined_scheduler_runs_fundamentals_after_market_is_published(
@@ -35,8 +36,18 @@ def test_combined_scheduler_runs_fundamentals_after_market_is_published(
     )
     monkeypatch.setattr(
         pipeline,
+        "run_scheduled_lynch_update",
+        lambda **_kwargs: LynchAutomationOutcome(
+            status="skipped",
+            target_date=date(2026, 7, 24),
+            stage="complete",
+            reason="该交易日林奇结果已发布",
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
         "_notify_combined",
-        lambda market_status, fundamental: notified.append(
+        lambda market_status, fundamental, _lynch: notified.append(
             (market_status, fundamental)
         ),
     )
@@ -80,11 +91,21 @@ def test_startup_catchup_continues_with_the_same_fundamental_target_date(
         "run_scheduled_fundamental_update",
         run_fundamental,
     )
+    monkeypatch.setattr(
+        pipeline,
+        "run_scheduled_lynch_update",
+        lambda **_kwargs: LynchAutomationOutcome(
+            status="succeeded",
+            target_date=date(2026, 6, 30),
+            stage="complete",
+            reason="林奇补跑完成",
+        ),
+    )
     notified: list[tuple[str, FundamentalAutomationOutcome | None]] = []
     monkeypatch.setattr(
         pipeline,
         "_notify_combined",
-        lambda market_status, fundamental: notified.append(
+        lambda market_status, fundamental, _lynch: notified.append(
             (market_status, fundamental)
         ),
     )

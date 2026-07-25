@@ -5125,3 +5125,221 @@ button:active {
     grid-column: span 6;
   }
 }
+.lynch-market {
+  margin: 28px 0;
+  border: 1px solid var(--line, #d9cfbd);
+  border-radius: 22px;
+  background: rgba(255, 252, 244, 0.88);
+  box-shadow: 0 18px 48px rgba(91, 72, 42, 0.08);
+  overflow: hidden;
+}
+
+.lynch-market__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 28px 30px 22px;
+}
+
+.lynch-market__header h2 {
+  margin: 5px 0 8px;
+  font-size: clamp(1.7rem, 2vw, 2.35rem);
+}
+
+.lynch-market__header p {
+  max-width: 760px;
+  margin: 0;
+  color: #6d6457;
+}
+
+.lynch-market__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(90px, 1fr));
+  gap: 10px;
+  min-width: 280px;
+  margin: 0;
+}
+
+.lynch-market__stats div {
+  padding: 12px 14px;
+  border: 1px solid #e4dac8;
+  border-radius: 14px;
+  background: #f7f0e3;
+}
+
+.lynch-market__stats dt {
+  color: #7b6f60;
+  font-size: 0.76rem;
+}
+
+.lynch-market__stats dd {
+  margin: 3px 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.lynch-market__publication {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 30px;
+  border-block: 1px solid #e4dac8;
+  background: #f5ecdc;
+  color: #645a4d;
+  font-size: 0.82rem;
+}
+
+.lynch-market__publication strong {
+  color: #a34d32;
+}
+
+.lynch-market__publication--warning {
+  background: #fff1cc;
+}
+
+.lynch-market__publication--expired {
+  background: #f8d8ce;
+}
+
+.lynch-market__controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 30px;
+}
+
+.lynch-market__controls form {
+  display: flex;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.lynch-market__controls input,
+.lynch-market__controls select,
+.lynch-market__controls button {
+  min-height: 40px;
+  border: 1px solid #d6c9b5;
+  border-radius: 10px;
+  background: #fffdf8;
+  color: #29251f;
+  padding: 0 13px;
+}
+
+.lynch-market__controls button {
+  cursor: pointer;
+  background: #242a26;
+  color: #fffaf0;
+}
+
+.lynch-market__table {
+  max-height: 620px;
+  overflow: auto;
+  border-top: 1px solid #e7ddcd;
+}
+
+.lynch-market__table table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1120px;
+}
+
+.lynch-market__table th,
+.lynch-market__table td {
+  padding: 13px 14px;
+  border-bottom: 1px solid #eee5d7;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.lynch-market__table th:first-child,
+.lynch-market__table td:first-child {
+  padding-left: 30px;
+  text-align: left;
+}
+
+.lynch-market__table th:last-child,
+.lynch-market__table td:last-child {
+  padding-right: 30px;
+  text-align: left;
+}
+
+.lynch-market__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f4ecdf;
+  color: #726657;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+
+.lynch-market__table tbody tr:hover {
+  background: #fbf4e8;
+}
+
+.lynch-market__table a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.lynch-market__table a strong,
+.lynch-market__table a span {
+  display: block;
+}
+
+.lynch-market__table a span {
+  margin-top: 2px;
+  color: #867968;
+  font-size: 0.76rem;
+}
+
+.lynch-grade {
+  display: inline-flex;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #e7e0d5;
+  font-size: 0.76rem;
+}
+
+.lynch-grade--exceptional,
+.lynch-grade--excellent {
+  background: #d9ead9;
+  color: #245d36;
+}
+
+.lynch-grade--earnings_contraction {
+  background: #f4d8ce;
+  color: #8d3d2b;
+}
+
+.lynch-market__note,
+.lynch-market__state {
+  margin: 0;
+  padding: 16px 30px 22px;
+  color: #776b5d;
+  font-size: 0.82rem;
+}
+
+.lynch-market__state p {
+  margin: 0 0 10px;
+}
+
+.lynch-market__state button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 15px;
+  background: #242a26;
+  color: #fffaf0;
+  cursor: pointer;
+}
+
+@media (max-width: 1100px) {
+  .lynch-market__header {
+    flex-direction: column;
+  }
+
+  .lynch-market__stats {
+    width: 100%;
+  }
+}

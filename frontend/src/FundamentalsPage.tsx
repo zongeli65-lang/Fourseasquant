@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { LynchMarketPanel } from "./LynchMarketPanel";
 
 type BoardCandidateMember = {
   code: string;
@@ -1021,6 +1022,8 @@ export function FundamentalsPage({ targetDate }: { targetDate: string }) {
           </div>
         </dl>
       </section>
+
+      <LynchMarketPanel targetDate={targetDate} />
 
       {capitalStatusState.kind === "ready" &&
         capitalStatusState.data.status === "failed" && (

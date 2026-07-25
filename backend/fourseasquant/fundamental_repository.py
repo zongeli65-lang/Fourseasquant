@@ -28,6 +28,7 @@ from fourseasquant.fundamental_mechanical import (
     PersonalFundamentalMonthlySnapshot,
     RULES_VERSION,
 )
+from fourseasquant.fundamental_lynch_repository import create_lynch_tables
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class FundamentalUpdateAttempt:
 
 
 def create_fundamental_tables(connection: sqlite3.Connection) -> None:
+    create_lynch_tables(connection)
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS fundamental_parsed_evidence (

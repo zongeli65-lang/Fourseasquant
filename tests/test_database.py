@@ -63,7 +63,7 @@ def test_version_one_task_history_is_migrated_with_meaningful_stages(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
         stage = connection.execute("SELECT stage FROM task_runs").fetchone()
-    assert version == ("16",)
+    assert version == ("17",)
     assert stage == ("completed",)
 
 
@@ -95,7 +95,7 @@ def test_version_two_automation_claims_gain_owned_claim_ids(tmp_path: Path) -> N
         claim = connection.execute(
             "SELECT target_date, claim_id FROM automation_claims"
         ).fetchone()
-    assert version == ("16",)
+    assert version == ("17",)
     assert claim is not None
     assert claim[0] == "2026-07-21"
     assert claim[1]
@@ -206,7 +206,7 @@ def test_version_fifteen_capital_batches_migrate_to_unknown_insider_window(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
     assert migrated == (0,)
-    assert version == ("16",)
+    assert version == ("17",)
 
 
 def test_snapshot_and_technical_publication_activate_atomically(

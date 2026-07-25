@@ -14,6 +14,10 @@ from fourseasquant.fundamental_automation import (
     FundamentalAutomationOutcome,
     run_scheduled_fundamental_update,
 )
+from fourseasquant.fundamental_lynch_automation import (
+    LynchAutomationOutcome,
+    run_scheduled_lynch_update,
+)
 
 
 def main() -> int:
@@ -41,13 +45,23 @@ def main() -> int:
             if market_allows_fundamental
             else None
         )
+        catchup_lynch = (
+            run_scheduled_lynch_update(target_date=market.target_date)
+            if market_allows_fundamental
+            else None
+        )
         should_notify = market.status in {"succeeded", "failed"} or (
             catchup_fundamental is not None
             and catchup_fundamental.status in {"succeeded", "failed"}
+        ) or (
+            catchup_lynch is not None
+            and catchup_lynch.status in {"succeeded", "failed"}
         )
         if should_notify:
             try:
-                _notify_combined(market.status, catchup_fundamental)
+                _notify_combined(
+                    market.status, catchup_fundamental, catchup_lynch
+                )
             except Exception as error:
                 print(
                     f"联合任务通知失败：{type(error).__name__}: {error}",
@@ -62,6 +76,11 @@ def main() -> int:
                         if catchup_fundamental is not None
                         else None
                     ),
+                    "lynch": (
+                        catchup_lynch.model_dump(mode="json")
+                        if catchup_lynch is not None
+                        else None
+                    ),
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -74,6 +93,10 @@ def main() -> int:
                 catchup_fundamental is not None
                 and catchup_fundamental.status == "failed"
             )
+            or (
+                catchup_lynch is not None
+                and catchup_lynch.status == "failed"
+            )
             else 0
         )
 
@@ -84,22 +107,31 @@ def main() -> int:
         notifier=notifications,
     )
     fundamental: FundamentalAutomationOutcome | None = None
+    lynch: LynchAutomationOutcome | None = None
     market_allows_fundamental = market.status == "succeeded" or (
         market.status == "skipped" and market.reason == "该交易日已发布"
     )
     if market_allows_fundamental:
         fundamental = run_scheduled_fundamental_update(force=force)
+        lynch = run_scheduled_lynch_update(
+            target_date=market.target_date,
+            force=force,
+        )
 
     failed = market.status == "failed" or (
         fundamental is not None and fundamental.status == "failed"
+    ) or (
+        lynch is not None and lynch.status == "failed"
     )
     should_notify = market.status in {"succeeded", "failed"} or (
         fundamental is not None
         and fundamental.status in {"succeeded", "failed"}
+    ) or (
+        lynch is not None and lynch.status in {"succeeded", "failed"}
     )
     if should_notify:
         try:
-            _notify_combined(market.status, fundamental)
+            _notify_combined(market.status, fundamental, lynch)
         except Exception as error:
             print(
                 f"联合任务通知失败：{type(error).__name__}: {error}",
@@ -114,6 +146,11 @@ def main() -> int:
                     if fundamental is not None
                     else None
                 ),
+                "lynch": (
+                    lynch.model_dump(mode="json")
+                    if lynch is not None
+                    else None
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -125,6 +162,7 @@ def main() -> int:
 def _notify_combined(
     market_status: str,
     fundamental: FundamentalAutomationOutcome | None,
+    lynch: LynchAutomationOutcome | None = None,
 ) -> None:
     notifier = MacOSNotifier()
     if market_status == "failed":
@@ -139,6 +177,12 @@ def _notify_combined(
             f"{fundamental.target_date.isoformat()} · {fundamental.reason}",
         )
         return
+    if lynch is not None and lynch.status == "failed":
+        notifier.send(
+            "Fourseasquant 林奇数据更新失败",
+            f"{lynch.target_date.isoformat()} · {lynch.reason}",
+        )
+        return
     target_date = (
         fundamental.target_date.isoformat()
         if fundamental is not None
@@ -146,7 +190,7 @@ def _notify_combined(
     )
     notifier.send(
         "Fourseasquant 更新成功",
-        f"{target_date} 日频结果与资本行为完整发布。",
+        f"{target_date} 日频结果、资本行为与林奇数据完整发布。",
     )
 
 
