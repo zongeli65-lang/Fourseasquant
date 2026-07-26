@@ -112,8 +112,12 @@ from fourseasquant.settings import (
 )
 from fourseasquant.sector_leadership import membership_json_schema
 from fourseasquant.technical_scoring import (
+    TechnicalScorePage,
+    TechnicalScoreSortField,
+    TechnicalScoreSortOrder,
     TechnicalScoreStatus,
     TechnicalScoreView,
+    read_technical_score_page,
     read_technical_score_status,
     read_top_technical_scores,
 )
@@ -326,6 +330,31 @@ def top_technical_scores(
         database_path(),
         requested_date=target_date,
         limit=limit,
+    )
+
+
+@app.get(
+    "/api/technical-scores",
+    response_model=TechnicalScorePage,
+)
+def technical_scores(
+    target_date: date,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=100),
+    search: str = Query(default="", max_length=60),
+    board: Literal["main", "chinext", "star"] | None = None,
+    sort_by: TechnicalScoreSortField = "total_score",
+    sort_order: TechnicalScoreSortOrder = "desc",
+) -> TechnicalScorePage:
+    return read_technical_score_page(
+        database_path(),
+        requested_date=target_date,
+        page=page,
+        page_size=page_size,
+        search=search,
+        board=board,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 

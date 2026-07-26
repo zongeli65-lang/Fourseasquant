@@ -1017,6 +1017,69 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.technical-score-controls {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(130px, 0.7fr) minmax(150px, 0.8fr) auto auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 15px;
+  padding: 15px 17px;
+  border: 1px solid #334a68;
+  border-radius: 10px;
+  background: rgba(18, 31, 50, 0.78);
+}
+
+.technical-score-controls label {
+  display: grid;
+  gap: 7px;
+}
+
+.technical-score-controls label > span {
+  color: #71839d;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.technical-score-controls input,
+.technical-score-controls select,
+.technical-score-controls button,
+.technical-pagination button {
+  height: 36px;
+  border: 1px solid #36506f;
+  border-radius: 7px;
+  color: #cbd8e8;
+  background: #12243a;
+  font: inherit;
+  font-size: 10px;
+}
+
+.technical-score-controls input,
+.technical-score-controls select {
+  width: 100%;
+  padding: 0 11px;
+}
+
+.technical-score-controls button,
+.technical-pagination button {
+  padding: 0 14px;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.technical-score-controls button:hover,
+.technical-pagination button:hover:not(:disabled) {
+  border-color: #5076a0;
+  background: #193250;
+}
+
+.technical-result-count {
+  align-self: center;
+  justify-self: end;
+  color: #9eb0c8;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .technical-contract-note {
   margin-bottom: 15px;
   padding: 15px 17px;
@@ -1101,6 +1164,32 @@ h2 {
   font-size: 13px;
 }
 
+.technical-rank {
+  color: #8da2bd;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.technical-data-state {
+  display: inline-flex;
+  padding: 4px 7px;
+  border: 1px solid #35506f;
+  border-radius: 999px;
+  font-size: 8px;
+}
+
+.technical-data-state--current {
+  border-color: rgba(73, 194, 145, 0.42);
+  color: #75d6ad;
+  background: rgba(24, 87, 64, 0.2);
+}
+
+.technical-data-state--stale {
+  border-color: rgba(220, 174, 88, 0.44);
+  color: #dfb76d;
+  background: rgba(104, 75, 26, 0.2);
+}
+
 .technical-evidence {
   display: flex;
   gap: 5px;
@@ -1129,6 +1218,26 @@ h2 {
   height: 90px !important;
   color: #71839d;
   text-align: center !important;
+}
+
+.technical-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  color: #71839d;
+  font-size: 9px;
+}
+
+.technical-pagination > div {
+  display: flex;
+  gap: 7px;
+}
+
+.technical-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .technical-footnote {
@@ -5151,4 +5260,66 @@ button:active {
 
 .fundamental-enhancement__content {
   padding: 0 18px 18px;
+}
+
+/* 全市场技术评分浏览：沿用明亮米色终端主题。 */
+
+.technical-score-controls {
+  border-color: #bdb3a4;
+  border-radius: 0;
+  background: #fffdf8;
+}
+
+.technical-score-controls label > span,
+.technical-result-count,
+.technical-pagination {
+  color: #5f5a52;
+}
+
+.technical-score-controls input,
+.technical-score-controls select,
+.technical-score-controls button,
+.technical-pagination button {
+  border-color: #8f8578;
+  border-radius: 0;
+  color: #171914;
+  background: #fffdf8;
+  color-scheme: light;
+}
+
+.technical-score-controls button:hover,
+.technical-pagination button:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: #fff;
+  background: var(--brand);
+}
+
+.technical-rank {
+  color: #5f5a52;
+}
+
+.technical-data-state {
+  border-radius: 0;
+}
+
+.technical-data-state--current {
+  border-color: rgba(47, 125, 116, 0.34);
+  color: #226960;
+  background: rgba(47, 125, 116, 0.09);
+}
+
+.technical-data-state--stale {
+  border-color: rgba(166, 112, 24, 0.32);
+  color: #8b611c;
+  background: rgba(210, 177, 117, 0.16);
+}
+
+@media (max-width: 1180px) {
+  .technical-score-controls {
+    grid-template-columns: minmax(240px, 1.5fr) repeat(2, minmax(130px, 1fr));
+  }
+
+  .technical-result-count {
+    justify-self: start;
+  }
 }

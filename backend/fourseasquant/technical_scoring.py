@@ -19,6 +19,16 @@ ALGORITHM_VERSION = "technical-v1"
 Board = Literal["main", "chinext", "star"]
 DerivativeState = Literal["positive", "zero", "negative"]
 StructureState = Literal["forming", "candidate", "strong", "broken"]
+TechnicalScoreSortField = Literal[
+    "total_score",
+    "structure_score",
+    "breakout_score",
+    "relative_strength_score",
+    "turnover_score",
+    "code",
+    "name",
+]
+TechnicalScoreSortOrder = Literal["asc", "desc"]
 
 
 class TechnicalParameters(BaseModel):
@@ -85,6 +95,23 @@ class TechnicalScoreStatus(BaseModel):
     status: Literal["not_initialized", "ready"]
     publication: TechnicalScorePublication | None
     parameters: TechnicalParameters
+
+
+class TechnicalScoreListItem(TechnicalScoreView):
+    rank: int | None
+    is_current: bool
+
+
+class TechnicalScorePage(BaseModel):
+    requested_date: date
+    actual_data_date: date | None
+    total: int
+    universe_count: int
+    current_score_count: int
+    stale_score_count: int
+    page: int
+    page_size: int
+    items: list[TechnicalScoreListItem]
 
 
 @dataclass(frozen=True)
@@ -311,6 +338,325 @@ def read_top_technical_scores(
             ),
         ).fetchall()
     return [_score_from_database_row(row) for row in rows]
+
+
+def read_technical_score_page(
+    path: Path,
+    *,
+    requested_date: date,
+    page: int = 1,
+    page_size: int = 100,
+    search: str = "",
+    board: Board | None = None,
+    sort_by: TechnicalScoreSortField = "total_score",
+    sort_order: TechnicalScoreSortOrder = "desc",
+) -> TechnicalScorePage:
+    status = read_technical_score_status(path)
+    if status.publication is None:
+        return TechnicalScorePage(
+            requested_date=requested_date,
+            actual_data_date=None,
+            total=0,
+            universe_count=0,
+            current_score_count=0,
+            stale_score_count=0,
+            page=max(1, page),
+            page_size=max(1, min(page_size, 100)),
+            items=[],
+        )
+    version = status.publication.version
+    qfq_source = status.publication.qfq_source
+    selected_page = max(1, page)
+    selected_page_size = max(1, min(page_size, 100))
+    normalized_search = search.strip()
+    with sqlite3.connect(path) as connection:
+        actual_row = connection.execute(
+            """
+            SELECT MAX(actual_data_date)
+            FROM technical_daily_scores
+            WHERE version = ? AND qfq_source = ? AND actual_data_date <= ?
+            """,
+            (version, qfq_source, requested_date.isoformat()),
+        ).fetchone()
+        if actual_row is None or actual_row[0] is None:
+            return TechnicalScorePage(
+                requested_date=requested_date,
+                actual_data_date=None,
+                total=0,
+                universe_count=0,
+                current_score_count=0,
+                stale_score_count=0,
+                page=selected_page,
+                page_size=selected_page_size,
+                items=[],
+            )
+        actual_data_date = date.fromisoformat(cast(str, actual_row[0]))
+        stale_scores = _read_stale_scores(
+            connection,
+            version=version,
+            qfq_source=qfq_source,
+            actual_data_date=actual_data_date,
+        )
+        current_score_count = cast(
+            int,
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM technical_daily_scores
+                WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
+                """,
+                (version, qfq_source, actual_data_date.isoformat()),
+            ).fetchone()[0],
+        )
+        filtered_stale = _filter_stale_scores(
+            stale_scores,
+            search=normalized_search,
+            board=board,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        where_sql, where_parameters = _technical_score_filters(
+            normalized_search,
+            board,
+        )
+        filtered_current_count = cast(
+            int,
+            connection.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM technical_daily_scores
+                WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
+                  {where_sql}
+                """,
+                (
+                    version,
+                    qfq_source,
+                    actual_data_date.isoformat(),
+                    *where_parameters,
+                ),
+            ).fetchone()[0],
+        )
+        offset = (selected_page - 1) * selected_page_size
+        current_items: list[TechnicalScoreListItem] = []
+        if offset < filtered_current_count:
+            current_limit = min(
+                selected_page_size,
+                filtered_current_count - offset,
+            )
+            current_items = _read_current_score_items(
+                connection,
+                version=version,
+                qfq_source=qfq_source,
+                actual_data_date=actual_data_date,
+                where_sql=where_sql,
+                where_parameters=where_parameters,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                limit=current_limit,
+                offset=offset,
+            )
+        stale_offset = max(0, offset - filtered_current_count)
+        remaining = selected_page_size - len(current_items)
+        stale_items = [
+            TechnicalScoreListItem(
+                **score.model_dump(),
+                rank=None,
+                is_current=False,
+            )
+            for score in filtered_stale[stale_offset : stale_offset + remaining]
+        ]
+    stale_score_count = len(stale_scores)
+    return TechnicalScorePage(
+        requested_date=requested_date,
+        actual_data_date=actual_data_date,
+        total=filtered_current_count + len(filtered_stale),
+        universe_count=current_score_count + stale_score_count,
+        current_score_count=current_score_count,
+        stale_score_count=stale_score_count,
+        page=selected_page,
+        page_size=selected_page_size,
+        items=[*current_items, *stale_items],
+    )
+
+
+def _technical_score_filters(
+    search: str,
+    board: Board | None,
+) -> tuple[str, tuple[object, ...]]:
+    clauses: list[str] = []
+    parameters: list[object] = []
+    if search:
+        escaped = (
+            search.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
+        clauses.append(
+            "(code LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')"
+        )
+        parameters.extend((pattern, pattern))
+    if board is not None:
+        clauses.append("board = ?")
+        parameters.append(board)
+    return (
+        f"AND {' AND '.join(clauses)}" if clauses else "",
+        tuple(parameters),
+    )
+
+
+def _read_current_score_items(
+    connection: sqlite3.Connection,
+    *,
+    version: str,
+    qfq_source: str,
+    actual_data_date: date,
+    where_sql: str,
+    where_parameters: tuple[object, ...],
+    sort_by: TechnicalScoreSortField,
+    sort_order: TechnicalScoreSortOrder,
+    limit: int,
+    offset: int,
+) -> list[TechnicalScoreListItem]:
+    sort_columns = {
+        "total_score": "total_score",
+        "structure_score": "structure_score",
+        "breakout_score": "breakout_score",
+        "relative_strength_score": "relative_strength_score",
+        "turnover_score": "turnover_score",
+        "code": "code",
+        "name": "name",
+    }
+    sort_column = sort_columns[sort_by]
+    direction = "ASC" if sort_order == "asc" else "DESC"
+    rows = connection.execute(
+        f"""
+        WITH ranked AS (
+            SELECT version, actual_data_date, code, name, board, ema3,
+                   derivative, derivative_state, zero_threshold, atr10,
+                   structure_state, structure_valid, active_breakout,
+                   structure_score, breakout_score, relative_strength_score,
+                   turnover_score, total_score, extrema_json, evidence_json,
+                   ROW_NUMBER() OVER (
+                       ORDER BY total_score DESC, structure_valid DESC,
+                                structure_score DESC, breakout_score DESC,
+                                relative_strength_score DESC, code
+                   ) AS market_rank
+            FROM technical_daily_scores
+            WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
+        )
+        SELECT version, actual_data_date, code, name, board, ema3,
+               derivative, derivative_state, zero_threshold, atr10,
+               structure_state, structure_valid, active_breakout,
+               structure_score, breakout_score, relative_strength_score,
+               turnover_score, total_score, extrema_json, evidence_json,
+               market_rank
+        FROM ranked
+        WHERE 1 = 1 {where_sql}
+        ORDER BY {sort_column} {direction}, code ASC
+        LIMIT ? OFFSET ?
+        """,
+        (
+            version,
+            qfq_source,
+            actual_data_date.isoformat(),
+            *where_parameters,
+            limit,
+            offset,
+        ),
+    ).fetchall()
+    return [
+        TechnicalScoreListItem(
+            **_score_from_database_row(row[:20]).model_dump(),
+            rank=int(row[20]),
+            is_current=True,
+        )
+        for row in rows
+    ]
+
+
+def _read_stale_scores(
+    connection: sqlite3.Connection,
+    *,
+    version: str,
+    qfq_source: str,
+    actual_data_date: date,
+) -> list[TechnicalScoreView]:
+    missing_rows = connection.execute(
+        """
+        SELECT code
+        FROM technical_daily_scores
+        WHERE version = ? AND qfq_source = ? AND actual_data_date <= ?
+        EXCEPT
+        SELECT code
+        FROM technical_daily_scores
+        WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
+        """,
+        (
+            version,
+            qfq_source,
+            actual_data_date.isoformat(),
+            version,
+            qfq_source,
+            actual_data_date.isoformat(),
+        ),
+    ).fetchall()
+    rows = [
+        row
+        for (code,) in missing_rows
+        if (
+            row := connection.execute(
+                """
+                SELECT version, actual_data_date, code, name, board, ema3,
+                       derivative, derivative_state, zero_threshold, atr10,
+                       structure_state, structure_valid, active_breakout,
+                       structure_score, breakout_score,
+                       relative_strength_score, turnover_score, total_score,
+                       extrema_json, evidence_json
+                FROM technical_daily_scores
+                WHERE version = ? AND qfq_source = ? AND code = ?
+                  AND actual_data_date <= ?
+                ORDER BY actual_data_date DESC
+                LIMIT 1
+                """,
+                (
+                    version,
+                    qfq_source,
+                    code,
+                    actual_data_date.isoformat(),
+                ),
+            ).fetchone()
+        )
+        is not None
+    ]
+    return [_score_from_database_row(row) for row in rows]
+
+
+def _filter_stale_scores(
+    scores: list[TechnicalScoreView],
+    *,
+    search: str,
+    board: Board | None,
+    sort_by: TechnicalScoreSortField,
+    sort_order: TechnicalScoreSortOrder,
+) -> list[TechnicalScoreView]:
+    normalized = search.casefold()
+    filtered = [
+        score
+        for score in scores
+        if (board is None or score.board == board)
+        and (
+            not normalized
+            or normalized in score.code.casefold()
+            or normalized in score.name.casefold()
+        )
+    ]
+    filtered.sort(key=lambda score: score.code)
+    filtered.sort(
+        key=lambda score: getattr(score, sort_by),
+        reverse=sort_order == "desc",
+    )
+    return filtered
 
 
 def _load_price_rows(

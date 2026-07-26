@@ -68,6 +68,26 @@ uv run python scripts/initialize_technical_scores.py --skip-market-refresh
 
 行情初始化采用严格完整批次。网络失败或历史缺失不能伪装成业务排除；任务支持按股票断点续跑，只有完整批次才能发布。
 
+### 5.1 网站全市场查询
+
+总览页继续调用 `/api/technical-scores/top` 展示前 5 名。策略页调用：
+
+```text
+GET /api/technical-scores
+```
+
+支持 `target_date`、`page`、`page_size`、`search`、`board`、`sort_by`
+和 `sort_order`。每页最多 100 只，搜索同时匹配六位代码和中文名称。
+
+响应将目标日有评分的股票与目标日缺行情的股票明确分开：
+
+- `current_score_count`：进入目标日正式排名的股票数；
+- `stale_score_count`：目标日没有评分、但存在历史评分的股票数；
+- `rank`：仅目标日评分具有正式名次；
+- `is_current=false`：页面显示最近评分日期，不与目标日排名混算。
+
+筛选、搜索和排序均在后端完成，前端不一次性加载全市场复杂证据。
+
 ## 6. 基本面任务衔接
 
 基本面新任务应先阅读完整的

@@ -22,12 +22,31 @@ def test_technical_score_endpoints_are_safe_before_initialization(
             "/api/technical-scores/top",
             params={"target_date": date(2026, 7, 22).isoformat()},
         )
+        full_page = client.get(
+            "/api/technical-scores",
+            params={
+                "target_date": date(2026, 7, 22).isoformat(),
+                "search": "600001",
+            },
+        )
 
     assert status.status_code == 200
     assert status.json()["status"] == "not_initialized"
     assert status.json()["publication"] is None
     assert ranking.status_code == 200
     assert ranking.json() == []
+    assert full_page.status_code == 200
+    assert full_page.json() == {
+        "requested_date": "2026-07-22",
+        "actual_data_date": None,
+        "total": 0,
+        "universe_count": 0,
+        "current_score_count": 0,
+        "stale_score_count": 0,
+        "page": 1,
+        "page_size": 100,
+        "items": [],
+    }
 
 
 def test_sector_membership_contract_is_exposed_as_json_schema(

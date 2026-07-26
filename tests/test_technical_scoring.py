@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,7 +18,9 @@ from fourseasquant.database import (
 )
 from fourseasquant.technical_scoring import (
     ALGORITHM_VERSION,
+    DEFAULT_PARAMETERS,
     TechnicalParameters,
+    read_technical_score_page,
     read_technical_score_status,
     read_top_technical_scores,
     score_technical_history,
@@ -170,3 +174,154 @@ def test_score_status_is_explicit_before_initialization(tmp_path: Path) -> None:
     assert read_top_technical_scores(
         database, requested_date=date(2026, 7, 23)
     ) == []
+
+
+def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "technical-page.db"
+    initialize_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO technical_score_versions (
+                version, parameters_json, created_at
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                ALGORITHM_VERSION,
+                DEFAULT_PARAMETERS.model_dump_json(),
+                "2026-07-24T16:30:00+08:00",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO technical_score_publications (
+                version, official_start, official_end, qfq_source,
+                symbol_count, score_count, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ALGORITHM_VERSION,
+                "2026-07-01",
+                "2026-07-24",
+                "test-qfq",
+                3,
+                3,
+                "2026-07-24T16:30:00+08:00",
+            ),
+        )
+        _insert_score_row(
+            connection,
+            trading_date="2026-07-24",
+            code="600001",
+            name="当前高分",
+            board="main",
+            total_score=90.0,
+        )
+        _insert_score_row(
+            connection,
+            trading_date="2026-07-24",
+            code="300001",
+            name="当前次高",
+            board="chinext",
+            total_score=80.0,
+        )
+        _insert_score_row(
+            connection,
+            trading_date="2026-07-23",
+            code="688001",
+            name="旧日样本",
+            board="star",
+            total_score=99.0,
+        )
+
+    first_page = read_technical_score_page(
+        database,
+        requested_date=date(2026, 7, 24),
+        page_size=2,
+    )
+    stale_search = read_technical_score_page(
+        database,
+        requested_date=date(2026, 7, 24),
+        search="旧日",
+    )
+    board_filter = read_technical_score_page(
+        database,
+        requested_date=date(2026, 7, 24),
+        board="chinext",
+    )
+
+    assert first_page.total == 3
+    assert first_page.universe_count == 3
+    assert first_page.current_score_count == 2
+    assert first_page.stale_score_count == 1
+    assert [item.code for item in first_page.items] == ["600001", "300001"]
+    assert [item.rank for item in first_page.items] == [1, 2]
+    assert all(item.is_current for item in first_page.items)
+
+    assert stale_search.total == 1
+    assert stale_search.items[0].code == "688001"
+    assert stale_search.items[0].actual_data_date == date(2026, 7, 23)
+    assert stale_search.items[0].rank is None
+    assert stale_search.items[0].is_current is False
+
+    assert board_filter.total == 1
+    assert board_filter.items[0].code == "300001"
+
+
+def _insert_score_row(
+    connection: sqlite3.Connection,
+    *,
+    trading_date: str,
+    code: str,
+    name: str,
+    board: str,
+    total_score: float,
+) -> None:
+    extrema = json.dumps(
+        {
+            "maxima": [
+                {"kind": "maximum", "date": trading_date, "value": 12.0}
+            ],
+            "minima": [
+                {"kind": "minimum", "date": trading_date, "value": 10.0}
+            ],
+        }
+    )
+    connection.execute(
+        """
+        INSERT INTO technical_daily_scores (
+            version, actual_data_date, code, name, board, qfq_source,
+            ema3, derivative, derivative_state, zero_threshold, atr10,
+            structure_state, structure_valid, active_breakout,
+            structure_score, breakout_score, relative_strength_score,
+            turnover_score, total_score, extrema_json, evidence_json
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        """,
+        (
+            ALGORITHM_VERSION,
+            trading_date,
+            code,
+            name,
+            board,
+            "test-qfq",
+            11.0,
+            0.1,
+            "positive",
+            0.01,
+            0.5,
+            "strong",
+            1,
+            0,
+            50.0,
+            15.0,
+            10.0,
+            5.0,
+            total_score,
+            extrema,
+            "{}",
+        ),
+    )
