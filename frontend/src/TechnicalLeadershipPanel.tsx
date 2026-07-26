@@ -122,7 +122,9 @@ export function TechnicalLeadershipPanel({
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       async function load() {
-        setState({ kind: "loading" });
+        setState((current) =>
+          current.kind === "ready" ? current : { kind: "loading" },
+        );
         try {
           const statusResponse = await fetch("/api/technical-scores/status", {
             signal: controller.signal,

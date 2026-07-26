@@ -115,12 +115,37 @@ test("策略页可以搜索和翻阅全市场技术评分", async ({ page }) => 
   await expect(page.getByText("当前高分", { exact: true })).toBeVisible();
   await expect(page.getByText("第 1 / 2 页")).toBeVisible();
 
+  const searchBox = page.getByRole("searchbox", { name: "搜索技术评分" });
+  await searchBox.click();
+  await page.keyboard.insertText("联");
+  await expect.poll(() => requestedSearches.includes("联")).toBe(true);
+  await expect(searchBox).toBeFocused();
+  await page.keyboard.insertText("创");
+  await expect(searchBox).toHaveValue("联创");
+  await searchBox.fill("");
+  await expect(page.getByText("当前高分", { exact: true })).toBeVisible();
+
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate(
+        (element) => getComputedStyle(element).overscrollBehaviorX,
+      ),
+    )
+    .toBe("none");
+  await expect
+    .poll(() =>
+      page.locator(".technical-table-wrap").evaluate(
+        (element) => getComputedStyle(element).overscrollBehaviorX,
+      ),
+    )
+    .toBe("contain");
+
   await page.getByRole("button", { name: "下一页" }).click();
   await expect(page.getByText("联创电子", { exact: true })).toBeVisible();
   await expect(page.getByText("目标日无行情 · 最近评分 2026-07-22")).toBeVisible();
   await expect.poll(() => requestedPages.includes(2)).toBe(true);
 
-  await page.getByRole("searchbox", { name: "搜索技术评分" }).fill("联创");
+  await searchBox.fill("联创");
   await expect(page.getByText("匹配 1 只")).toBeVisible();
   await expect(page.getByText("联创电子", { exact: true })).toBeVisible();
   await expect.poll(() => requestedSearches.includes("联创")).toBe(true);

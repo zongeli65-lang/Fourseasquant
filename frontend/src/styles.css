@@ -4592,6 +4592,11 @@ body {
   background: #f2eee6;
 }
 
+html,
+body {
+  overscroll-behavior-x: none;
+}
+
 button:active {
   transform: none;
 }
@@ -5042,6 +5047,10 @@ button:active {
 .overview-details table,
 .backfill-day-results {
   border-radius: 0;
+}
+
+.technical-table-wrap {
+  overscroll-behavior-x: contain;
 }
 
 .data-table th {
