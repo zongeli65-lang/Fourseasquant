@@ -105,23 +105,30 @@ const pages: PageDefinition[] = [
     description: "查看规则范围内股票与指数的日 K、成交量和 RSI。",
   },
   {
+    path: "/technical-scores",
+    label: "技术评分",
+    shortLabel: "04",
+    title: "全市场技术评分",
+    description: "独立查看全市场量价评分、结构证据与历史数据状态。",
+  },
+  {
     path: "/strategy",
     label: "策略",
-    shortLabel: "04",
-    title: "策略与技术评分",
-    description: "策略净值、组合明细与独立量价技术证据。",
+    shortLabel: "05",
+    title: "策略复盘",
+    description: "查看策略净值、基准表现、组合明细与交易记录。",
   },
   {
     path: "/fundamentals",
     label: "基本面",
-    shortLabel: "05",
+    shortLabel: "06",
     title: "个人基本面分析",
     description: "全量基本面股票库、板块筛选与个股独立证据。",
   },
   {
     path: "/tasks",
     label: "任务",
-    shortLabel: "06",
+    shortLabel: "07",
     title: "任务中心",
     description: "运行目标日期任务、查看失败状态与历史记录。",
   },
@@ -611,13 +618,18 @@ export function App() {
               }
             />
             <Route
+              path="/technical-scores"
+              element={
+                <TechnicalLeadershipPanel
+                  targetDate={targetDate}
+                  onSelectSecurity={selectInstrument}
+                />
+              }
+            />
+            <Route
               path="/strategy"
               element={
                 <>
-                  <TechnicalLeadershipPanel
-                    targetDate={targetDate}
-                    onSelectSecurity={selectInstrument}
-                  />
                   {snapshot ? (
                     <>
                       <StrategyPerformance data={snapshot.strategy_performance} />

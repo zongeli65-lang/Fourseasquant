@@ -59,7 +59,7 @@ function score(
   };
 }
 
-test("策略页可以搜索和翻阅全市场技术评分", async ({ page }) => {
+test("技术评分页可以搜索和翻阅全市场评分，并与策略页保持独立", async ({ page }) => {
   const requestedPages: number[] = [];
   const requestedSearches: string[] = [];
   await page.route("**/api/technical-scores/status", async (route) => {
@@ -109,9 +109,12 @@ test("策略页可以搜索和翻阅全市场技术评分", async ({ page }) => 
     });
   });
 
-  await page.goto("/strategy?target_date=2026-07-24");
+  await page.goto("/technical-scores?target_date=2026-07-24");
 
   await expect(page.getByRole("heading", { name: "全市场个股技术评分" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "技术评分" })).toHaveClass(
+    /primary-nav__link--active/,
+  );
   await expect(page.getByText("当前高分", { exact: true })).toBeVisible();
   await expect(page.getByText("第 1 / 2 页")).toBeVisible();
 
@@ -149,4 +152,11 @@ test("策略页可以搜索和翻阅全市场技术评分", async ({ page }) => 
   await expect(page.getByText("匹配 1 只")).toBeVisible();
   await expect(page.getByText("联创电子", { exact: true })).toBeVisible();
   await expect.poll(() => requestedSearches.includes("联创")).toBe(true);
+
+  await page.getByRole("link", { name: "策略" }).click();
+  await expect(page).toHaveURL(/\/strategy\?target_date=2026-07-24$/);
+  await expect(page.getByRole("heading", { name: "策略复盘" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "全市场个股技术评分" }),
+  ).toHaveCount(0);
 });
