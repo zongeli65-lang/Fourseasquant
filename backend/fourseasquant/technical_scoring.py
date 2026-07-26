@@ -15,7 +15,7 @@ from fourseasquant.akshare_history import HISTORY_SOURCE
 from fourseasquant.candlesticks import index_source
 
 
-ALGORITHM_VERSION = "technical-v1"
+ALGORITHM_VERSION = "technical-v2"
 Board = Literal["main", "chinext", "star"]
 DerivativeState = Literal["positive", "zero", "negative"]
 StructureState = Literal["forming", "candidate", "strong", "broken"]
@@ -36,6 +36,7 @@ class TechnicalParameters(BaseModel):
     atr_period: int = Field(default=10, ge=3)
     zero_band_atr: float = Field(default=0.10, gt=0)
     effective_lift_atr: float = Field(default=0.10, gt=0)
+    structure_break_pct: float = Field(default=0.02, gt=0, lt=1)
     lift_score_cap_atr: float = Field(default=3.0, gt=0)
     structure_weight: float = 55.0
     breakout_weight: float = 20.0
@@ -132,6 +133,7 @@ class _Extremum:
     kind: Literal["maximum", "minimum"]
     trading_date: date
     value: float
+    atr10: float
 
 
 def score_technical_history(
@@ -743,6 +745,11 @@ def _score_symbol(
     segment_index = 0
     breakout_high = 0.0
     breakout_streak = 0
+    structure_was_valid = False
+    structure_broken_latched = False
+    structure_break_reason: str | None = None
+    structure_break_reference: float | None = None
+    structure_break_line: float | None = None
     scores: list[TechnicalScoreView] = []
 
     for index, row in enumerate(rows):
@@ -768,7 +775,34 @@ def _score_symbol(
         zero_threshold = atr * parameters.zero_band_atr
         trend = 1 if derivative > zero_threshold else -1 if derivative < -zero_threshold else 0
 
-        if trend != 0:
+        last_trough = minima[-1] if minima else None
+        last_trough_value = (
+            last_trough.value if last_trough is not None else None
+        )
+        current_break_line = (
+            last_trough_value * (1 - parameters.structure_break_pct)
+            if last_trough_value is not None
+            else None
+        )
+        just_broke_structure = (
+            structure_was_valid
+            and last_trough_value is not None
+            and current_break_line is not None
+            and ema < current_break_line
+        )
+        if just_broke_structure:
+            structure_broken_latched = True
+            structure_break_reason = "ema_below_last_trough"
+            structure_break_reference = last_trough_value
+            structure_break_line = current_break_line
+            maxima.clear()
+            minima.clear()
+            last_trend = trend if trend != 0 else -1
+            segment_index = index
+            breakout_high = 0.0
+            breakout_streak = 0
+        confirmed_extremum: _Extremum | None = None
+        if not just_broke_structure and trend != 0:
             if last_trend is None:
                 last_trend = trend
                 segment_index = index
@@ -784,11 +818,13 @@ def _score_symbol(
                     kind=kind,
                     trading_date=rows[segment_index].trading_date,
                     value=ema_values[segment_index],
+                    atr10=atr_values[segment_index],
                 )
                 (maxima if kind == "maximum" else minima).append(extremum)
+                confirmed_extremum = extremum
                 last_trend = trend
                 segment_index = index
-        elif last_trend is not None:
+        elif not just_broke_structure and last_trend is not None:
             segment_index = _updated_segment_index(
                 ema_values, segment_index, index, last_trend
             )
@@ -817,18 +853,40 @@ def _score_symbol(
                 or trough_lifts[-1] < -parameters.effective_lift_atr
             )
         )
+        if structure_valid:
+            structure_broken_latched = False
+            structure_break_reason = None
+            structure_break_reference = None
+            structure_break_line = None
+        elif broken:
+            structure_broken_latched = True
+            structure_break_reason = "extrema_stopped_rising"
+            if confirmed_extremum is not None:
+                maxima = (
+                    [confirmed_extremum]
+                    if confirmed_extremum.kind == "maximum"
+                    else []
+                )
+                minima = (
+                    [confirmed_extremum]
+                    if confirmed_extremum.kind == "minimum"
+                    else []
+                )
         structure_state: StructureState = (
             "broken"
-            if broken
+            if structure_broken_latched
             else "strong"
             if strong
             else "candidate"
             if structure_valid
             else "forming"
         )
-        structure_score = _structure_score(
-            peak_lifts, trough_lifts, parameters
+        structure_score = (
+            _structure_score(peak_lifts, trough_lifts, parameters)
+            if structure_valid
+            else 0.0
         )
+        structure_was_valid = structure_valid
 
         last_peak = maxima[-1].value if maxima else None
         active_breakout = (
@@ -836,7 +894,7 @@ def _score_symbol(
             and trend > 0
             and ema > last_peak + zero_threshold
         )
-        if active_breakout:
+        if active_breakout and structure_valid:
             if breakout_streak == 0 or ema >= breakout_high:
                 breakout_streak += 1
                 breakout_high = ema
@@ -905,6 +963,18 @@ def _score_symbol(
                     ],
                     "breakout_streak": breakout_streak,
                     "minimum_leader_score": parameters.minimum_leader_score,
+                    "structure_break_pct": parameters.structure_break_pct,
+                    "structure_break_reason": structure_break_reason,
+                    "structure_break_reference": (
+                        round(structure_break_reference, 6)
+                        if structure_break_reference is not None
+                        else None
+                    ),
+                    "structure_break_line": (
+                        round(structure_break_line, 6)
+                        if structure_break_line is not None
+                        else None
+                    ),
                 },
             )
         )
@@ -922,10 +992,11 @@ def _updated_segment_index(
 
 
 def _normalized_lifts(
-    extrema: list[_Extremum], atr: float
+    extrema: list[_Extremum], _current_atr: float
 ) -> list[float]:
     return [
-        (extrema[index].value - extrema[index - 1].value) / atr
+        (extrema[index].value - extrema[index - 1].value)
+        / max(extrema[index].atr10, extrema[index - 1].atr10)
         for index in range(1, len(extrema))
     ]
 

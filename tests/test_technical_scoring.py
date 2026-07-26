@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import fourseasquant.technical_scoring as technical_scoring
 from fourseasquant.candlesticks import INDEXES, index_source
 from fourseasquant.database import (
     HistoricalBenchmarkFactRow,
@@ -161,6 +162,124 @@ def test_score_history_publishes_versioned_derivative_extrema_and_scores(
             parameters=TechnicalParameters(ema_span=5),
             version=ALGORITHM_VERSION,
         )
+
+
+def test_structure_breaks_after_ema3_falls_two_percent_below_last_trough() -> None:
+    start = date(2026, 1, 1)
+    closes = [
+        10.0,
+        10.5,
+        11.0,
+        10.4,
+        10.0,
+        10.8,
+        11.6,
+        11.0,
+        10.7,
+        11.5,
+        12.2,
+        11.6,
+        11.2,
+        12.0,
+        12.8,
+        12.1,
+        11.8,
+        12.7,
+        13.5,
+        12.8,
+        12.4,
+        13.4,
+        14.2,
+        13.6,
+        13.1,
+        14.0,
+        14.8,
+        14.2,
+        13.8,
+        14.7,
+        15.5,
+        15.0,
+        14.6,
+        15.4,
+        16.1,
+        16.8,
+        15.0,
+        13.5,
+        12.0,
+        10.5,
+        9.0,
+    ]
+    dates = [start + timedelta(days=index) for index in range(len(closes))]
+    rows = [
+        technical_scoring._PriceRow(
+            trading_date=trading_date,
+            code="603773",
+            name="破位样本",
+            open=closes[index - 1] if index else close,
+            high=max(closes[index - 1] if index else close, close) + 0.2,
+            low=min(closes[index - 1] if index else close, close) - 0.2,
+            close=close,
+            previous_close=closes[index - 1] if index else close,
+            turnover_cny=100_000_000,
+        )
+        for index, (trading_date, close) in enumerate(
+            zip(dates, closes, strict=True)
+        )
+    ]
+    benchmark_closes = {
+        symbol: {
+            trading_date: 1_000.0 + index
+            for index, trading_date in enumerate(dates)
+        }
+        for symbol in ("sh000300", "sh000001")
+    }
+
+    scores = technical_scoring._score_symbol(
+        rows,
+        benchmark_closes=benchmark_closes,
+        official_start=dates[0],
+        official_end=dates[-1],
+        qfq_source="test-qfq",
+        parameters=DEFAULT_PARAMETERS,
+        version=ALGORITHM_VERSION,
+    )
+
+    assert any(score.structure_valid for score in scores[:-5])
+    broken = scores[-1]
+    assert broken.structure_state == "broken"
+    assert broken.structure_valid is False
+    assert broken.structure_score == 0
+    assert broken.breakout_score == 0
+    assert broken.evidence["structure_break_reason"] == "ema_below_last_trough"
+    observation_breakouts = [
+        score
+        for score in scores
+        if score.active_breakout and not score.structure_valid
+    ]
+    assert observation_breakouts
+    assert all(score.breakout_score == 0 for score in observation_breakouts)
+
+
+def test_extrema_lifts_do_not_change_with_later_atr() -> None:
+    extrema = [
+        technical_scoring._Extremum(
+            kind="minimum",
+            trading_date=date(2026, 1, 1),
+            value=10.0,
+            atr10=1.0,
+        ),
+        technical_scoring._Extremum(
+            kind="minimum",
+            trading_date=date(2026, 1, 10),
+            value=12.0,
+            atr10=2.0,
+        ),
+    ]
+
+    high_current_atr = technical_scoring._normalized_lifts(extrema, 10.0)
+    low_current_atr = technical_scoring._normalized_lifts(extrema, 0.1)
+
+    assert high_current_atr == low_current_atr == [1.0]
 
 
 def test_score_status_is_explicit_before_initialization(tmp_path: Path) -> None:

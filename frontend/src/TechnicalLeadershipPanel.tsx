@@ -22,6 +22,7 @@ type ScoreStatus = {
     minimum_leader_score: number;
     ema_span: number;
     atr_period: number;
+    structure_break_pct: number;
   };
 };
 
@@ -41,6 +42,11 @@ type TechnicalScore = {
   total_score: number;
   maxima: Array<{ date: string; value: number }>;
   minima: Array<{ date: string; value: number }>;
+  evidence?: {
+    structure_break_reason?: string | null;
+    structure_break_reference?: number | null;
+    structure_break_line?: number | null;
+  };
   rank?: number | null;
   is_current?: boolean;
 };
@@ -301,7 +307,7 @@ export function TechnicalLeadershipPanel({
           <strong>当前仅展示技术评分，不等同于正式板块龙头</strong>
           <span>等待基本面模块提供带版本和生效日期的板块成员关系。</span>
         </div>
-        <span>3 日 EMA · 10 日自适应波幅 · 0—100 分</span>
+        <span>3 日 EMA · 前低 2% 破位失效 · 0—100 分</span>
       </div>
 
       <div className="technical-table-wrap">
@@ -334,6 +340,12 @@ export function TechnicalLeadershipPanel({
                     <span className={score.structure_valid ? "technical-evidence--valid" : ""}>{STRUCTURE_LABELS[score.structure_state]}</span>
                     <span>{DERIVATIVE_LABELS[score.derivative_state]}</span>
                     {score.active_breakout && <span className="technical-evidence--breakout">创新高进行中</span>}
+                    {score.evidence?.structure_break_reason === "ema_below_last_trough" && (
+                      <span>
+                        前低 {score.evidence.structure_break_reference?.toFixed(2)}
+                        {" · "}2% 破坏线 {score.evidence.structure_break_line?.toFixed(2)}
+                      </span>
+                    )}
                   </div>
                 </td>
                 {!compact && (

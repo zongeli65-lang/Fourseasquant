@@ -87,7 +87,7 @@ flowchart LR
 
 主要代码：[`backend/fourseasquant/technical_scoring.py`](../backend/fourseasquant/technical_scoring.py)
 
-当前算法版本为 `technical-v1`，使用前复权日线计算：
+当前算法版本为 `technical-v2`，使用前复权日线计算：
 
 - 3 日 EMA（指数移动平均）；
 - 10 日 ATR（平均真实波幅）自适应导数零区间；
@@ -95,6 +95,9 @@ flowchart LR
 - 进行中突破；
 - 3、5、10 日相对强度；
 - 成交确认。
+
+当 EMA3 跌破最近确认局部低点 2% 时，原上升结构立即硬失效，结构分和
+突破分归零。旧极值不会在反弹后自动复活，股票必须重新形成完整抬升结构。
 
 初始权重为：结构 55、突破 20、相对强度 15、成交确认 10。默认技术龙头合格门槛为 65 分。
 
