@@ -66,8 +66,7 @@ type BoardFilter = "" | TechnicalScore["board"];
 type ScoreSort =
   | "structure_score"
   | "breakout_score"
-  | "relative_strength_score"
-  | "turnover_score";
+  | "relative_strength_score";
 
 type LoadState =
   | { kind: "loading" }
@@ -102,7 +101,6 @@ const RANKING_LABELS: Record<ScoreSort, string> = {
   structure_score: "极值结构",
   breakout_score: "突破",
   relative_strength_score: "相对强度",
-  turnover_score: "成交确认",
 };
 
 export function TechnicalLeadershipPanel({
@@ -292,8 +290,8 @@ export function TechnicalLeadershipPanel({
 
       <div className="technical-contract-note">
         <div>
-          <strong>四项指标独立排行，不合成技术总分</strong>
-          <span>当前查看：{RANKING_LABELS[sortBy]}榜；等待基本面模块提供正式板块成员关系。</span>
+          <strong>三项指标独立排行，不合成技术总分</strong>
+          <span>成交确认并入突破榜与相对强度榜，不再单独成榜。当前查看：{RANKING_LABELS[sortBy]}榜。</span>
         </div>
         <span>3 日 EMA（指数移动平均线）· 前低 2% 破位失效</span>
       </div>
@@ -322,6 +320,9 @@ export function TechnicalLeadershipPanel({
                   <div className="technical-evidence">
                     <span className={score.structure_valid ? "technical-evidence--valid" : ""}>{STRUCTURE_LABELS[score.structure_state]}</span>
                     <span>{DERIVATIVE_LABELS[score.derivative_state]}</span>
+                    {sortBy !== "structure_score" && (
+                      <span>成交确认 {score.turnover_score.toFixed(2)}</span>
+                    )}
                     {score.active_breakout && <span className="technical-evidence--breakout">创新高进行中</span>}
                     {score.evidence?.structure_break_reason === "ema_below_last_trough" && (
                       <span>

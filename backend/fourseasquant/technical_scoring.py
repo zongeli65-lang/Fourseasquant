@@ -23,7 +23,6 @@ TechnicalScoreSortField = Literal[
     "structure_score",
     "breakout_score",
     "relative_strength_score",
-    "turnover_score",
 ]
 TechnicalScoreSortOrder = Literal["asc", "desc"]
 
@@ -320,8 +319,12 @@ def read_top_technical_scores(
             "structure_score": "structure_score",
             "breakout_score": "breakout_score",
             "relative_strength_score": "relative_strength_score",
-            "turnover_score": "turnover_score",
         }[sort_by]
+        ranking_order = (
+            f"{sort_column} DESC, turnover_score DESC"
+            if sort_by in {"breakout_score", "relative_strength_score"}
+            else f"{sort_column} DESC"
+        )
         rows = connection.execute(
             f"""
             SELECT version, actual_data_date, code, name, board, ema3,
@@ -331,7 +334,7 @@ def read_top_technical_scores(
                    turnover_score, total_score, extrema_json, evidence_json
             FROM technical_daily_scores
             WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
-            ORDER BY {sort_column} DESC, code
+            ORDER BY {ranking_order}, code
             LIMIT ?
             """,
             (
@@ -526,10 +529,19 @@ def _read_current_score_items(
         "structure_score": "structure_score",
         "breakout_score": "breakout_score",
         "relative_strength_score": "relative_strength_score",
-        "turnover_score": "turnover_score",
     }
     sort_column = sort_columns[sort_by]
     direction = "ASC" if sort_order == "asc" else "DESC"
+    ranking_order = (
+        f"{sort_column} DESC, turnover_score DESC"
+        if sort_by in {"breakout_score", "relative_strength_score"}
+        else f"{sort_column} DESC"
+    )
+    display_order = (
+        f"{sort_column} {direction}, turnover_score {direction}"
+        if sort_by in {"breakout_score", "relative_strength_score"}
+        else f"{sort_column} {direction}"
+    )
     rows = connection.execute(
         f"""
         WITH ranked AS (
@@ -539,7 +551,7 @@ def _read_current_score_items(
                    structure_score, breakout_score, relative_strength_score,
                    turnover_score, total_score, extrema_json, evidence_json,
                    DENSE_RANK() OVER (
-                       ORDER BY {sort_column} DESC
+                       ORDER BY {ranking_order}
                    ) AS market_rank
             FROM technical_daily_scores
             WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
@@ -552,7 +564,7 @@ def _read_current_score_items(
                market_rank
         FROM ranked
         WHERE 1 = 1 {where_sql}
-        ORDER BY {sort_column} {direction}, code ASC
+        ORDER BY {display_order}, code ASC
         LIMIT ? OFFSET ?
         """,
         (
@@ -651,10 +663,19 @@ def _filter_stale_scores(
         )
     ]
     filtered.sort(key=lambda score: score.code)
-    filtered.sort(
-        key=lambda score: getattr(score, sort_by),
-        reverse=sort_order == "desc",
-    )
+    if sort_by in {"breakout_score", "relative_strength_score"}:
+        filtered.sort(
+            key=lambda score: (
+                getattr(score, sort_by),
+                score.turnover_score,
+            ),
+            reverse=sort_order == "desc",
+        )
+    else:
+        filtered.sort(
+            key=lambda score: getattr(score, sort_by),
+            reverse=sort_order == "desc",
+        )
     return filtered
 
 

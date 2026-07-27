@@ -118,7 +118,8 @@ test("技术评分页按单项独立排行，并与策略页保持独立", async
   await expect(page.getByRole("link", { name: "技术评分" })).toHaveClass(
     /primary-nav__link--active/,
   );
-  await expect(page.getByText("四项指标独立排行，不合成技术总分")).toBeVisible();
+  await expect(page.getByText("三项指标独立排行，不合成技术总分")).toBeVisible();
+  await expect(page.getByRole("button", { name: "成交确认榜" })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "极值结构名次" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "总分" })).toHaveCount(0);
   await expect.poll(() => requestedMetrics.includes("structure_score")).toBe(true);
@@ -163,6 +164,7 @@ test("技术评分页按单项独立排行，并与策略页保持独立", async
   await searchBox.fill("");
   await page.getByRole("button", { name: "突破榜" }).click();
   await expect(page.getByRole("columnheader", { name: "突破名次" })).toBeVisible();
+  await expect(page.getByText("成交确认 5.00").first()).toBeVisible();
   await expect.poll(() => requestedMetrics.includes("breakout_score")).toBe(true);
 
   await page.getByRole("link", { name: "策略" }).click();

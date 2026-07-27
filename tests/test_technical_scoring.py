@@ -338,7 +338,8 @@ def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
             board="main",
             total_score=90.0,
             structure_score=50.0,
-            breakout_score=10.0,
+            breakout_score=15.0,
+            turnover_score=5.0,
         )
         _insert_score_row(
             connection,
@@ -349,6 +350,7 @@ def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
             total_score=80.0,
             structure_score=50.0,
             breakout_score=15.0,
+            turnover_score=3.0,
         )
         _insert_score_row(
             connection,
@@ -403,11 +405,11 @@ def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
     assert board_filter.total == 1
     assert board_filter.items[0].code == "300001"
     assert [item.code for item in breakout_ranking.items[:2]] == [
-        "300001",
         "600001",
+        "300001",
     ]
     assert [item.rank for item in breakout_ranking.items[:2]] == [1, 2]
-    assert filtered_breakout_rank.items[0].rank == 2
+    assert filtered_breakout_rank.items[0].rank == 1
 
 
 def _insert_score_row(
@@ -420,6 +422,7 @@ def _insert_score_row(
     total_score: float,
     structure_score: float = 50.0,
     breakout_score: float = 15.0,
+    turnover_score: float = 5.0,
 ) -> None:
     extrema = json.dumps(
         {
@@ -461,7 +464,7 @@ def _insert_score_row(
             structure_score,
             breakout_score,
             10.0,
-            5.0,
+            turnover_score,
             total_score,
             extrema,
             "{}",
