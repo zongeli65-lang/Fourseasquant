@@ -15,7 +15,7 @@ from fourseasquant.akshare_history import HISTORY_SOURCE
 from fourseasquant.candlesticks import index_source
 
 
-ALGORITHM_VERSION = "technical-v2"
+ALGORITHM_VERSION = "technical-v3"
 Board = Literal["main", "chinext", "star"]
 DerivativeState = Literal["positive", "zero", "negative"]
 StructureState = Literal["forming", "candidate", "strong", "broken"]
@@ -1086,7 +1086,7 @@ def _benchmark_return(
 
 
 def _scaled_excess(excess_pct: float, scale_pct: float) -> float:
-    return min(1.0, max(0.0, 0.5 + excess_pct / (2 * scale_pct)))
+    return 0.5 + 0.5 * excess_pct / (abs(excess_pct) + scale_pct)
 
 
 def _turnover_score(

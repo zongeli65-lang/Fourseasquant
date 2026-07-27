@@ -282,6 +282,18 @@ def test_extrema_lifts_do_not_change_with_later_atr() -> None:
     assert high_current_atr == low_current_atr == [1.0]
 
 
+def test_relative_strength_curve_is_monotonic_without_hard_saturation() -> None:
+    neutral = technical_scoring._scaled_excess(0.0, 5.0)
+    moderate = technical_scoring._scaled_excess(5.0, 5.0)
+    strong = technical_scoring._scaled_excess(50.0, 5.0)
+    weak = technical_scoring._scaled_excess(-5.0, 5.0)
+
+    assert neutral == pytest.approx(0.5)
+    assert 0.5 < moderate < strong < 1.0
+    assert 0.0 < weak < 0.5
+    assert weak + moderate == pytest.approx(1.0)
+
+
 def test_score_status_is_explicit_before_initialization(tmp_path: Path) -> None:
     database = tmp_path / "empty.db"
     initialize_database(database)
