@@ -325,11 +325,13 @@ def technical_score_status() -> TechnicalScoreStatus:
 def top_technical_scores(
     target_date: date,
     limit: int = Query(default=20, ge=1, le=100),
+    sort_by: TechnicalScoreSortField = "structure_score",
 ) -> list[TechnicalScoreView]:
     return read_top_technical_scores(
         database_path(),
         requested_date=target_date,
         limit=limit,
+        sort_by=sort_by,
     )
 
 
@@ -343,7 +345,7 @@ def technical_scores(
     page_size: int = Query(default=100, ge=1, le=100),
     search: str = Query(default="", max_length=60),
     board: Literal["main", "chinext", "star"] | None = None,
-    sort_by: TechnicalScoreSortField = "total_score",
+    sort_by: TechnicalScoreSortField = "structure_score",
     sort_order: TechnicalScoreSortOrder = "desc",
 ) -> TechnicalScorePage:
     return read_technical_score_page(

@@ -337,6 +337,8 @@ def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
             name="当前高分",
             board="main",
             total_score=90.0,
+            structure_score=50.0,
+            breakout_score=10.0,
         )
         _insert_score_row(
             connection,
@@ -345,6 +347,8 @@ def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
             name="当前次高",
             board="chinext",
             total_score=80.0,
+            structure_score=50.0,
+            breakout_score=15.0,
         )
         _insert_score_row(
             connection,
@@ -370,13 +374,24 @@ def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
         requested_date=date(2026, 7, 24),
         board="chinext",
     )
+    breakout_ranking = read_technical_score_page(
+        database,
+        requested_date=date(2026, 7, 24),
+        sort_by="breakout_score",
+    )
+    filtered_breakout_rank = read_technical_score_page(
+        database,
+        requested_date=date(2026, 7, 24),
+        search="600001",
+        sort_by="breakout_score",
+    )
 
     assert first_page.total == 3
     assert first_page.universe_count == 3
     assert first_page.current_score_count == 2
     assert first_page.stale_score_count == 1
-    assert [item.code for item in first_page.items] == ["600001", "300001"]
-    assert [item.rank for item in first_page.items] == [1, 2]
+    assert [item.code for item in first_page.items] == ["300001", "600001"]
+    assert [item.rank for item in first_page.items] == [1, 1]
     assert all(item.is_current for item in first_page.items)
 
     assert stale_search.total == 1
@@ -387,6 +402,12 @@ def test_full_score_page_searches_all_symbols_and_separates_stale_scores(
 
     assert board_filter.total == 1
     assert board_filter.items[0].code == "300001"
+    assert [item.code for item in breakout_ranking.items[:2]] == [
+        "300001",
+        "600001",
+    ]
+    assert [item.rank for item in breakout_ranking.items[:2]] == [1, 2]
+    assert filtered_breakout_rank.items[0].rank == 2
 
 
 def _insert_score_row(
@@ -397,6 +418,8 @@ def _insert_score_row(
     name: str,
     board: str,
     total_score: float,
+    structure_score: float = 50.0,
+    breakout_score: float = 15.0,
 ) -> None:
     extrema = json.dumps(
         {
@@ -435,8 +458,8 @@ def _insert_score_row(
             "strong",
             1,
             0,
-            50.0,
-            15.0,
+            structure_score,
+            breakout_score,
             10.0,
             5.0,
             total_score,

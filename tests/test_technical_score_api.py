@@ -29,6 +29,13 @@ def test_technical_score_endpoints_are_safe_before_initialization(
                 "search": "600001",
             },
         )
+        rejected_total_score = client.get(
+            "/api/technical-scores",
+            params={
+                "target_date": date(2026, 7, 22).isoformat(),
+                "sort_by": "total_score",
+            },
+        )
 
     assert status.status_code == 200
     assert status.json()["status"] == "not_initialized"
@@ -47,6 +54,7 @@ def test_technical_score_endpoints_are_safe_before_initialization(
         "page_size": 100,
         "items": [],
     }
+    assert rejected_total_score.status_code == 422
 
 
 def test_sector_membership_contract_is_exposed_as_json_schema(

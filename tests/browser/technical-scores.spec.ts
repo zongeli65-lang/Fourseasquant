@@ -59,9 +59,10 @@ function score(
   };
 }
 
-test("技术评分页可以搜索和翻阅全市场评分，并与策略页保持独立", async ({ page }) => {
+test("技术评分页按单项独立排行，并与策略页保持独立", async ({ page }) => {
   const requestedPages: number[] = [];
   const requestedSearches: string[] = [];
+  const requestedMetrics: string[] = [];
   await page.route("**/api/technical-scores/status", async (route) => {
     await route.fulfill({
       status: 200,
@@ -73,8 +74,10 @@ test("技术评分页可以搜索和翻阅全市场评分，并与策略页保�
     const url = new URL(route.request().url());
     const requestedPage = Number(url.searchParams.get("page") ?? "1");
     const search = url.searchParams.get("search") ?? "";
+    const metric = url.searchParams.get("sort_by") ?? "";
     requestedPages.push(requestedPage);
     requestedSearches.push(search);
+    requestedMetrics.push(metric);
     const stale = score("002036", "联创电子", {
       rank: null,
       current: false,
@@ -111,10 +114,14 @@ test("技术评分页可以搜索和翻阅全市场评分，并与策略页保�
 
   await page.goto("/technical-scores?target_date=2026-07-24");
 
-  await expect(page.getByRole("heading", { name: "全市场个股技术评分" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "全市场技术指标排行榜" })).toBeVisible();
   await expect(page.getByRole("link", { name: "技术评分" })).toHaveClass(
     /primary-nav__link--active/,
   );
+  await expect(page.getByText("四项指标独立排行，不合成技术总分")).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "极值结构名次" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "总分" })).toHaveCount(0);
+  await expect.poll(() => requestedMetrics.includes("structure_score")).toBe(true);
   await expect(page.getByText("当前高分", { exact: true })).toBeVisible();
   await expect(page.getByText("第 1 / 2 页")).toBeVisible();
 
@@ -153,10 +160,15 @@ test("技术评分页可以搜索和翻阅全市场评分，并与策略页保�
   await expect(page.getByText("联创电子", { exact: true })).toBeVisible();
   await expect.poll(() => requestedSearches.includes("联创")).toBe(true);
 
+  await searchBox.fill("");
+  await page.getByRole("button", { name: "突破榜" }).click();
+  await expect(page.getByRole("columnheader", { name: "突破名次" })).toBeVisible();
+  await expect.poll(() => requestedMetrics.includes("breakout_score")).toBe(true);
+
   await page.getByRole("link", { name: "策略" }).click();
   await expect(page).toHaveURL(/\/strategy\?target_date=2026-07-24$/);
   await expect(page.getByRole("heading", { name: "策略复盘" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "全市场个股技术评分" }),
+    page.getByRole("heading", { name: "全市场技术指标排行榜" }),
   ).toHaveCount(0);
 });

@@ -39,7 +39,6 @@ type TechnicalScore = {
   breakout_score: number;
   relative_strength_score: number;
   turnover_score: number;
-  total_score: number;
   maxima: Array<{ date: string; value: number }>;
   minima: Array<{ date: string; value: number }>;
   evidence?: {
@@ -65,13 +64,10 @@ type ScorePage = {
 
 type BoardFilter = "" | TechnicalScore["board"];
 type ScoreSort =
-  | "total_score"
   | "structure_score"
   | "breakout_score"
   | "relative_strength_score"
-  | "turnover_score"
-  | "code"
-  | "name";
+  | "turnover_score";
 
 type LoadState =
   | { kind: "loading" }
@@ -102,6 +98,13 @@ const DERIVATIVE_LABELS: Record<TechnicalScore["derivative_state"], string> = {
   negative: "导数为负",
 };
 
+const RANKING_LABELS: Record<ScoreSort, string> = {
+  structure_score: "极值结构",
+  breakout_score: "突破",
+  relative_strength_score: "相对强度",
+  turnover_score: "成交确认",
+};
+
 export function TechnicalLeadershipPanel({
   targetDate,
   onSelectSecurity,
@@ -115,8 +118,7 @@ export function TechnicalLeadershipPanel({
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [board, setBoard] = useState<BoardFilter>("");
-  const [sortBy, setSortBy] = useState<ScoreSort>("total_score");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [sortBy, setSortBy] = useState<ScoreSort>("structure_score");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -137,24 +139,17 @@ export function TechnicalLeadershipPanel({
             setState({ kind: "ready", status, scores: [], pageData: null });
             return;
           }
-          const params = compact
-            ? new URLSearchParams({
-                target_date: targetDate,
-                limit: "20",
-              })
-            : new URLSearchParams({
-                target_date: targetDate,
-                page: String(page),
-                page_size: "100",
-                search,
-                sort_by: sortBy,
-                sort_order: sortOrder,
-                ...(board ? { board } : {}),
-              });
+          const params = new URLSearchParams({
+            target_date: targetDate,
+            page: compact ? "1" : String(page),
+            page_size: compact ? "5" : "100",
+            search: compact ? "" : search,
+            sort_by: sortBy,
+            sort_order: "desc",
+            ...(!compact && board ? { board } : {}),
+          });
           const scoreResponse = await fetch(
-            compact
-              ? `/api/technical-scores/top?${params}`
-              : `/api/technical-scores?${params}`,
+            `/api/technical-scores?${params}`,
             {
               signal: controller.signal,
             },
@@ -162,14 +157,12 @@ export function TechnicalLeadershipPanel({
           if (!scoreResponse.ok) {
             throw new Error(`技术评分接口返回 ${scoreResponse.status}`);
           }
-          const result = compact
-            ? ((await scoreResponse.json()) as TechnicalScore[])
-            : ((await scoreResponse.json()) as ScorePage);
+          const result = (await scoreResponse.json()) as ScorePage;
           setState({
             kind: "ready",
             status,
-            scores: compact ? (result as TechnicalScore[]) : (result as ScorePage).items,
-            pageData: compact ? null : (result as ScorePage),
+            scores: result.items,
+            pageData: result,
           });
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") return;
@@ -182,7 +175,7 @@ export function TechnicalLeadershipPanel({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [board, compact, page, search, sortBy, sortOrder, targetDate]);
+  }, [board, compact, page, search, sortBy, targetDate]);
 
   useEffect(() => {
     setPage(1);
@@ -224,7 +217,7 @@ export function TechnicalLeadershipPanel({
       <header className="technical-panel__header">
         <div>
           <p className="section-kicker">技术龙头 · 独立量价体系</p>
-          <h2>{compact ? "技术评分概览" : "全市场个股技术评分"}</h2>
+          <h2>{compact ? "技术指标排行概览" : "全市场技术指标排行榜"}</h2>
           <p>
             正式覆盖 {publication.official_start} 至 {publication.official_end}
             {" · "}算法 {publication.version}
@@ -237,7 +230,7 @@ export function TechnicalLeadershipPanel({
         <>
           <div className="technical-summary-grid">
             <article><span>评分股票</span><strong>{(pageData?.universe_count ?? publication.symbol_count).toLocaleString("zh-CN")}</strong><small>主板 · 创业板 · 科创板</small></article>
-            <article><span>目标日评分</span><strong>{(pageData?.current_score_count ?? 0).toLocaleString("zh-CN")}</strong><small>进入目标日正式排名</small></article>
+            <article><span>目标日排行</span><strong>{(pageData?.current_score_count ?? 0).toLocaleString("zh-CN")}</strong><small>进入各指标独立排名</small></article>
             <article><span>目标日无行情</span><strong>{(pageData?.stale_score_count ?? 0).toLocaleString("zh-CN")}</strong><small>保留最近评分，不混入排名</small></article>
             <article><span>永久结果</span><strong>{publication.score_count.toLocaleString("zh-CN")}</strong><small>股票 × 交易日</small></article>
           </div>
@@ -269,34 +262,27 @@ export function TechnicalLeadershipPanel({
                 <option value="star">科创板</option>
               </select>
             </label>
-            <label>
-              <span>排序指标</span>
-              <select
-                value={sortBy}
-                onChange={(event) => {
-                  setSortBy(event.target.value as ScoreSort);
-                  setPage(1);
-                }}
-              >
-                <option value="total_score">技术总分</option>
-                <option value="structure_score">极值结构</option>
-                <option value="breakout_score">进行中突破</option>
-                <option value="relative_strength_score">相对强度</option>
-                <option value="turnover_score">成交确认</option>
-                <option value="code">股票代码</option>
-                <option value="name">股票名称</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              aria-label={sortOrder === "desc" ? "当前降序，切换为升序" : "当前升序，切换为降序"}
-              onClick={() => {
-                setSortOrder((value) => (value === "desc" ? "asc" : "desc"));
-                setPage(1);
-              }}
+            <div
+              className="segmented-control"
+              role="group"
+              aria-label="选择技术指标排行榜"
             >
-              {sortOrder === "desc" ? "降序" : "升序"}
-            </button>
+              {(Object.entries(RANKING_LABELS) as Array<[ScoreSort, string]>).map(
+                ([metric, label]) => (
+                  <button
+                    key={metric}
+                    type="button"
+                    aria-pressed={sortBy === metric}
+                    onClick={() => {
+                      setSortBy(metric);
+                      setPage(1);
+                    }}
+                  >
+                    {label}榜
+                  </button>
+                ),
+              )}
+            </div>
             <span className="technical-result-count">
               匹配 {pageData?.total.toLocaleString("zh-CN") ?? "—"} 只
             </span>
@@ -306,37 +292,32 @@ export function TechnicalLeadershipPanel({
 
       <div className="technical-contract-note">
         <div>
-          <strong>当前仅展示技术评分，不等同于正式板块龙头</strong>
-          <span>等待基本面模块提供带版本和生效日期的板块成员关系。</span>
+          <strong>四项指标独立排行，不合成技术总分</strong>
+          <span>当前查看：{RANKING_LABELS[sortBy]}榜；等待基本面模块提供正式板块成员关系。</span>
         </div>
-        <span>3 日 EMA · 前低 2% 破位失效 · 0—100 分</span>
+        <span>3 日 EMA（指数移动平均线）· 前低 2% 破位失效</span>
       </div>
 
       <div className="technical-table-wrap">
         <table>
           <thead>
             <tr>
-              {!compact && <th>排名</th>}
-              <th>股票</th><th>市场</th><th>总分</th><th>极值结构</th><th>进行中突破</th>
-              <th>相对强度</th><th>成交确认</th><th>状态证据</th>
+              <th>{RANKING_LABELS[sortBy]}名次</th>
+              <th>股票</th><th>市场</th><th>{RANKING_LABELS[sortBy]}指标值</th><th>状态证据</th>
               {!compact && <th>数据状态</th>}
             </tr>
           </thead>
           <tbody>
             {(compact ? state.scores.slice(0, 5) : state.scores).map((score) => (
               <tr key={score.code}>
-                {!compact && <td><strong className="technical-rank">{score.rank ?? "—"}</strong></td>}
+                <td><strong className="technical-rank">{score.rank ?? "—"}</strong></td>
                 <td>
                   <button type="button" onClick={() => onSelectSecurity({ instrumentType: "stock", code: score.code, name: score.name })}>
                     <strong>{score.name}</strong><span>{score.code}</span>
                   </button>
                 </td>
                 <td>{BOARD_LABELS[score.board]}</td>
-                <td><strong className="technical-total">{score.total_score.toFixed(2)}</strong></td>
-                <td>{score.structure_score.toFixed(2)} / 55</td>
-                <td>{score.breakout_score.toFixed(2)} / 20</td>
-                <td>{score.relative_strength_score.toFixed(2)} / 15</td>
-                <td>{score.turnover_score.toFixed(2)} / 10</td>
+                <td><strong className="technical-total">{score[sortBy].toFixed(2)}</strong></td>
                 <td>
                   <div className="technical-evidence">
                     <span className={score.structure_valid ? "technical-evidence--valid" : ""}>{STRUCTURE_LABELS[score.structure_state]}</span>
@@ -364,7 +345,7 @@ export function TechnicalLeadershipPanel({
               </tr>
             ))}
             {state.scores.length === 0 && (
-              <tr><td colSpan={compact ? 8 : 10} className="technical-empty">没有匹配的技术评分。</td></tr>
+              <tr><td colSpan={compact ? 5 : 6} className="technical-empty">没有匹配的技术排行。</td></tr>
             )}
           </tbody>
         </table>
@@ -394,8 +375,8 @@ export function TechnicalLeadershipPanel({
       )}
       <p className="technical-footnote">
         {compact
-          ? "展示目标日期前五名。点击股票直接进入行情浏览。"
-          : "当日评分按未四舍五入分数排名；缺行情股票仅展示最近评分且不进入当日排名。点击股票可查看日 K 线、成交量和 RSI（相对强弱指标）。"}
+          ? `展示目标日期${RANKING_LABELS[sortBy]}榜前五名。点击股票直接进入行情浏览。`
+          : `${RANKING_LABELS[sortBy]}榜按该项未四舍五入的指标值独立排名；缺行情股票仅展示最近结果且不进入目标日排名。点击股票可查看日 K 线、成交量和 RSI（相对强弱指标）。`}
       </p>
     </section>
   );

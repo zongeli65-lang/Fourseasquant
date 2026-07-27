@@ -20,13 +20,10 @@ Board = Literal["main", "chinext", "star"]
 DerivativeState = Literal["positive", "zero", "negative"]
 StructureState = Literal["forming", "candidate", "strong", "broken"]
 TechnicalScoreSortField = Literal[
-    "total_score",
     "structure_score",
     "breakout_score",
     "relative_strength_score",
     "turnover_score",
-    "code",
-    "name",
 ]
 TechnicalScoreSortOrder = Literal["asc", "desc"]
 
@@ -298,6 +295,7 @@ def read_top_technical_scores(
     *,
     requested_date: date,
     limit: int = 20,
+    sort_by: TechnicalScoreSortField = "structure_score",
 ) -> list[TechnicalScoreView]:
     status = read_technical_score_status(path)
     if status.publication is None:
@@ -318,8 +316,14 @@ def read_top_technical_scores(
         ).fetchone()
         if actual_row is None or actual_row[0] is None:
             return []
+        sort_column = {
+            "structure_score": "structure_score",
+            "breakout_score": "breakout_score",
+            "relative_strength_score": "relative_strength_score",
+            "turnover_score": "turnover_score",
+        }[sort_by]
         rows = connection.execute(
-            """
+            f"""
             SELECT version, actual_data_date, code, name, board, ema3,
                    derivative, derivative_state, zero_threshold, atr10,
                    structure_state, structure_valid, active_breakout,
@@ -327,9 +331,7 @@ def read_top_technical_scores(
                    turnover_score, total_score, extrema_json, evidence_json
             FROM technical_daily_scores
             WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
-            ORDER BY total_score DESC, structure_valid DESC,
-                     structure_score DESC, breakout_score DESC,
-                     relative_strength_score DESC, code
+            ORDER BY {sort_column} DESC, code
             LIMIT ?
             """,
             (
@@ -350,7 +352,7 @@ def read_technical_score_page(
     page_size: int = 100,
     search: str = "",
     board: Board | None = None,
-    sort_by: TechnicalScoreSortField = "total_score",
+    sort_by: TechnicalScoreSortField = "structure_score",
     sort_order: TechnicalScoreSortOrder = "desc",
 ) -> TechnicalScorePage:
     status = read_technical_score_status(path)
@@ -521,13 +523,10 @@ def _read_current_score_items(
     offset: int,
 ) -> list[TechnicalScoreListItem]:
     sort_columns = {
-        "total_score": "total_score",
         "structure_score": "structure_score",
         "breakout_score": "breakout_score",
         "relative_strength_score": "relative_strength_score",
         "turnover_score": "turnover_score",
-        "code": "code",
-        "name": "name",
     }
     sort_column = sort_columns[sort_by]
     direction = "ASC" if sort_order == "asc" else "DESC"
@@ -539,10 +538,8 @@ def _read_current_score_items(
                    structure_state, structure_valid, active_breakout,
                    structure_score, breakout_score, relative_strength_score,
                    turnover_score, total_score, extrema_json, evidence_json,
-                   ROW_NUMBER() OVER (
-                       ORDER BY total_score DESC, structure_valid DESC,
-                                structure_score DESC, breakout_score DESC,
-                                relative_strength_score DESC, code
+                   DENSE_RANK() OVER (
+                       ORDER BY {sort_column} DESC
                    ) AS market_rank
             FROM technical_daily_scores
             WHERE version = ? AND qfq_source = ? AND actual_data_date = ?
