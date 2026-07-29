@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fourseasquant.local/contracts/industry-chain-knowledge-update.schema.json",
+  "title": "IndustryChainKnowledgeUpdate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "update_id",
+    "previous_knowledge_version",
+    "new_knowledge_version",
+    "created_at",
+    "change_type",
+    "affected_nodes",
+    "affected_companies",
+    "summary",
+    "evidence_refs",
+    "evidence_strength",
+    "rule_change",
+    "activation_status",
+    "notification_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "industry-chain-knowledge-update-v0.1"
+    },
+    "update_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "previous_knowledge_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "new_knowledge_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "change_type": {
+      "enum": [
+        "add_node",
+        "remove_node",
+        "add_relation",
+        "remove_relation",
+        "update_relation",
+        "add_company_mapping",
+        "remove_company_mapping",
+        "update_company_mapping"
+      ]
+    },
+    "affected_nodes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "affected_companies": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^\\d{6}$"
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "evidence_strength": {
+      "enum": [
+        "official_primary",
+        "strong_nonprimary",
+        "conflicted"
+      ]
+    },
+    "rule_change": {
+      "const": false
+    },
+    "activation_status": {
+      "enum": [
+        "active_and_notified",
+        "pending_user_confirmation",
+        "rejected"
+      ]
+    },
+    "notification_status": {
+      "enum": [
+        "pending",
+        "sent",
+        "failed"
+      ]
+    }
+  }
+}

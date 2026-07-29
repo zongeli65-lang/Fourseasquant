@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { movementTone, signedPercentage } from "./marketFormatting";
+import type { InstrumentSelection } from "./KlineExplorer";
 
 type Holding = {
   security: SecurityRef;
@@ -38,11 +39,23 @@ export type PortfolioReviewData = {
 
 type PortfolioView = "holdings" | "trades" | "contributions";
 
-function SecurityCell({ security }: { security: SecurityRef }) {
-  return <><strong>{security.name}</strong><span>{security.code}</span></>;
+function SecurityCell({
+  security,
+  onSelect,
+}: {
+  security: SecurityRef;
+  onSelect: (selection: InstrumentSelection) => void;
+}) {
+  return <button type="button" className="portfolio-security-link" onClick={() => onSelect({ instrumentType: "stock", code: security.code, name: security.name })}><strong>{security.name}</strong><span>{security.code}</span></button>;
 }
 
-export function PortfolioReview({ data }: { data: PortfolioReviewData }) {
+export function PortfolioReview({
+  data,
+  onSelectSecurity,
+}: {
+  data: PortfolioReviewData;
+  onSelectSecurity: (selection: InstrumentSelection) => void;
+}) {
   const [view, setView] = useState<PortfolioView>("holdings");
   const [holdingSort, setHoldingSort] = useState<"weight_pct" | "holding_return_pct">(
     "weight_pct",
@@ -121,7 +134,7 @@ export function PortfolioReview({ data }: { data: PortfolioReviewData }) {
           <tbody>
             {holdings.map((holding) => (
               <tr key={holding.security.code}>
-                <td><SecurityCell security={holding.security} /></td>
+                <td><SecurityCell security={holding.security} onSelect={onSelectSecurity} /></td>
                 <td>{holding.industry}</td>
                 <td>{holding.weight_pct.toFixed(2)}%</td>
                 <td className={`metric-value--${movementTone(holding.holding_return_pct)}`}>
@@ -137,9 +150,9 @@ export function PortfolioReview({ data }: { data: PortfolioReviewData }) {
         <table className="data-table" data-testid="trades-table">
           <thead><tr><th>股票</th><th>方向</th><th>数量</th><th>权重变化</th><th>成交价格</th></tr></thead>
           <tbody>
-            {data.trades.map((trade) => (
-              <tr key={`${trade.date}-${trade.security.code}-${trade.side}`}>
-                <td><SecurityCell security={trade.security} /></td>
+            {data.trades.map((trade, index) => (
+              <tr key={`${trade.date}-${trade.security.code}-${trade.side}-${index}`}>
+                <td><SecurityCell security={trade.security} onSelect={onSelectSecurity} /></td>
                 <td className={trade.side === "buy" ? "metric-value--positive" : "metric-value--negative"}>
                   {trade.side === "buy" ? "买入" : "卖出"}
                 </td>
@@ -170,7 +183,7 @@ export function PortfolioReview({ data }: { data: PortfolioReviewData }) {
           <tbody>
             {contributions.map((item) => (
               <tr key={item.security.code}>
-                <td><SecurityCell security={item.security} /></td>
+                <td><SecurityCell security={item.security} onSelect={onSelectSecurity} /></td>
                 <td className={`metric-value--${movementTone(item.contribution_pct)}`}>
                   {signedPercentage(item.contribution_pct)}
                 </td>

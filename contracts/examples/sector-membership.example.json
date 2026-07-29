@@ -1,0 +1,21 @@
+{
+  "membership_version": "fundamental-members-2026q2-v1",
+  "fundamental_version": "fundamental-analysis-v1",
+  "effective_date": "2026-07-23",
+  "published_at": "2026-07-23T15:30:00+08:00",
+  "complete": true,
+  "memberships": [
+    {
+      "sector_id": "power-equipment",
+      "sector_name": "电力设备",
+      "code": "600001",
+      "effective_from": "2026-07-23",
+      "effective_to": null,
+      "is_active": true,
+      "change_reason": "财报、公司研究与业务相关度确认",
+      "evidence_refs": [
+        "fundamental-report:600001:2026q2"
+      ]
+    }
+  ]
+}

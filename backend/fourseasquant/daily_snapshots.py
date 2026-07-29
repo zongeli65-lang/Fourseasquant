@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -11,10 +12,13 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 
 from fourseasquant.database import (
+    TechnicalScorePublicationRow,
+    active_automation_claim_exists,
     create_task_run,
     database_path,
     fail_task_run,
     latest_task_run,
+    latest_task_run_on_or_before,
     latest_snapshot,
     latest_task_status,
     publish_snapshot,
@@ -22,10 +26,8 @@ from fourseasquant.database import (
     update_task_stage,
 )
 from fourseasquant.market_overview import MarketOverview
-from fourseasquant.sector_performance import SectorPerformance
 from fourseasquant.simulated_market_data import (
     simulated_market_overview,
-    simulated_sector_performance,
 )
 from fourseasquant.strategy_performance import (
     StrategyPerformance,
@@ -75,6 +77,7 @@ class PreparedMarket:
     payload: Mapping[str, object]
     benchmark: str
     adapter: SimulationAdapterProfile
+    technical_publication: TechnicalScorePublicationRow | None = None
 
 
 SIMULATION_ADAPTERS = {
@@ -90,7 +93,6 @@ class MinimalSnapshot(BaseModel):
     label: str
     seed: int
     market_overview: MarketOverview
-    sector_performance: SectorPerformance
     strategy_performance: StrategyPerformance
     portfolio_review: PortfolioReview
 
@@ -152,7 +154,6 @@ def prepare_simulated_market(
                 settings.new_stock_exclusion_days,
                 turnover_scale=adapter.turnover_scale,
             ).model_dump(),
-            "sector_performance": simulated_sector_performance().model_dump(),
         },
         benchmark=settings.benchmark,
         adapter=adapter,
@@ -183,16 +184,39 @@ def read_dashboard(target_date: date, *, path: Path | None = None) -> DashboardR
     snapshot_row = latest_snapshot(selected_path, target_date)
     task_status = cast(TaskStatus, latest_task_status(selected_path, target_date))
     latest_run = latest_task_run(selected_path, target_date)
-    failure = (
-        FailureSummary(
+    if latest_run is None:
+        candidate = latest_task_run_on_or_before(selected_path, target_date)
+        if candidate is not None and (
+            snapshot_row is None
+            or candidate.target_date > snapshot_row.actual_data_date
+        ):
+            latest_run = candidate
+            task_status = cast(TaskStatus, candidate.status)
+
+    failure: FailureSummary | None = None
+    if latest_run is not None and latest_run.status == "failed":
+        failure = FailureSummary(
             stage=latest_run.stage,
             stage_label=STAGE_LABELS.get(latest_run.stage, latest_run.stage),
-            failed_at=latest_run.finished_at,
+            failed_at=latest_run.finished_at or latest_run.started_at,
             error_summary=latest_run.error_summary or "任务执行失败",
         )
-        if latest_run and latest_run.status == "failed" and latest_run.finished_at
-        else None
-    )
+    elif (
+        latest_run is not None
+        and latest_run.status == "running"
+        and not active_automation_claim_exists(
+            selected_path,
+            latest_run.target_date,
+            datetime.now(ZoneInfo("Asia/Shanghai")),
+        )
+    ):
+        task_status = "failed"
+        failure = FailureSummary(
+            stage=latest_run.stage,
+            stage_label=STAGE_LABELS.get(latest_run.stage, latest_run.stage),
+            failed_at=latest_run.started_at,
+            error_summary="任务进程已经中断，请重新运行今日任务",
+        )
     if snapshot_row is None:
         return DashboardResponse(
             target_date=target_date,
@@ -278,6 +302,7 @@ def execute_daily_task(
             payload_json=payload_json,
             published_at=finished_at,
             simulate_failure=simulate_failure_stage == current_stage,
+            technical_publication=prepared_market.technical_publication,
         )
     except Exception as error:
         failed_at = datetime.now(ZoneInfo("Asia/Shanghai"))
@@ -285,7 +310,7 @@ def execute_daily_task(
         error_summary = (
             f"模拟触发：{STAGE_LABELS[current_stage]}失败"
             if is_simulated
-            else "任务执行异常，请查看本机日志"
+            else _safe_error_summary(error)
         )
         fail_task_run(
             selected_path,
@@ -343,6 +368,22 @@ def _raise_simulated_failure(
 ) -> None:
     if current_stage == requested_stage:
         raise SimulatedStageFailure(current_stage)
+
+
+def _safe_error_summary(error: Exception) -> str:
+    message = " ".join(str(error).split())
+    message = re.sub(
+        r"(?i)(api[_-]?key|token|password|authorization)(\s*[=:]\s*)\S+",
+        r"\1\2[REDACTED]",
+        message,
+    )
+    message = re.sub(
+        r"(?i)\bbearer\s+\S+",
+        "Bearer [REDACTED]",
+        message,
+    )
+    detail = message[:300] if message else "未提供异常详情"
+    return f"{type(error).__name__}: {detail}"
 
 
 def _safe_log_task_event(

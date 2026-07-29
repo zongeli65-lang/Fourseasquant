@@ -407,7 +407,7 @@ class LocalApplicationTest(unittest.TestCase):
         self.assertEqual(overview["eligible_security_count"], 5)
         self.assertNotIn("sentiment_score", overview)
 
-    def test_sector_rankings_are_sorted_and_share_the_published_snapshot(self) -> None:
+    def test_snapshot_does_not_publish_simulated_sector_leaders(self) -> None:
         request = Request(
             f"http://127.0.0.1:{self.port}/api/tasks/daily",
             data=json.dumps({"target_date": "2026-07-21"}).encode("utf-8"),
@@ -421,22 +421,9 @@ class LocalApplicationTest(unittest.TestCase):
             f"http://127.0.0.1:{self.port}/api/dashboard?target_date=2026-07-21",
             timeout=1,
         ) as response:
-            sectors = json.load(response)["snapshot"]["sector_performance"]
+            snapshot = json.load(response)["snapshot"]
 
-        for category in ("industries", "concepts"):
-            ranking = sectors[category]
-            self.assertEqual(len(ranking["leaders"]), 10)
-            self.assertEqual(len(ranking["laggards"]), 10)
-            leader_values = [item["change_pct"] for item in ranking["leaders"]]
-            laggard_values = [item["change_pct"] for item in ranking["laggards"]]
-            self.assertEqual(leader_values, sorted(leader_values, reverse=True))
-            self.assertEqual(laggard_values, sorted(laggard_values))
-            heatmap_values = {
-                item["name"]: item["change_pct"]
-                for item in ranking["heatmap_moves"]
-            }
-            for item in ranking["leaders"] + ranking["laggards"]:
-                self.assertEqual(heatmap_values[item["name"]], item["change_pct"])
+        self.assertNotIn("sector_performance", snapshot)
 
     def test_strategy_snapshot_contains_three_year_daily_history(self) -> None:
         request = Request(
@@ -648,10 +635,30 @@ class LocalApplicationTest(unittest.TestCase):
         with urlopen(f"http://127.0.0.1:{self.port}/", timeout=1) as response:
             page = response.read().decode("utf-8")
 
-        self.assertIn("<title>Fourseasquant</title>", page)
+        self.assertIn(
+            "<title>Fourseasquant · A 股量化工作台</title>",
+            page,
+        )
         self.assertIn("Fourseasquant", page)
         self.assertIn("应用状态", page)
-        self.assertIn('data-theme="dark"', page)
+        self.assertIn('data-theme="light"', page)
+
+    def test_production_frontend_serves_every_direct_navigation_page(self) -> None:
+        for route in ("/market-environment", "/technical-scores"):
+            with self.subTest(route=route):
+                with urlopen(
+                    f"http://127.0.0.1:{self.port}{route}",
+                    timeout=1,
+                ) as response:
+                    page = response.read().decode("utf-8")
+
+                self.assertEqual(response.status, 200)
+                self.assertIn(
+                    "<title>Fourseasquant · A 股量化工作台</title>",
+                    page,
+                )
+
+
 class DevelopmentCommandTest(unittest.TestCase):
     def test_one_command_starts_the_frontend_backend_and_database(self) -> None:
         api_port = available_port()
@@ -697,7 +704,10 @@ class DevelopmentCommandTest(unittest.TestCase):
                     self.fail("开发命令未在十秒内同时启动前端和后端")
 
                 self.assertEqual(health["database"], "ready")
-                self.assertIn("<title>Fourseasquant</title>", page)
+                self.assertIn(
+                    "<title>Fourseasquant · A 股量化工作台</title>",
+                    page,
+                )
             finally:
                 if process.poll() is None:
                     os.killpg(os.getpgid(process.pid), signal.SIGTERM)

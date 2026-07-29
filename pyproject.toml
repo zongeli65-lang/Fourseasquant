@@ -4,14 +4,17 @@ version = "0.1.0"
 description = "本地 A 股市场与策略复盘应用"
 requires-python = ">=3.14"
 dependencies = [
+    "akshare>=1.18.70,<2",
     "fastapi>=0.116,<1",
+    "httpx>=0.28,<1",
+    "pypdf>=5,<7",
     "uvicorn>=0.35,<1",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28,<1",
     "mypy>=1.17,<2",
+    "pandas-stubs>=2.3,<3",
     "pytest>=8.4,<10",
 ]
 

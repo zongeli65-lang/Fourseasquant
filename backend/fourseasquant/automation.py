@@ -1,26 +1,32 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import subprocess
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from threading import Event, Thread
 from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
+from fourseasquant.candlesticks import latest_candle_publication
 from fourseasquant.daily_snapshots import (
     FailureStage,
     TaskRunResponse,
     execute_daily_task,
 )
+from fourseasquant.candle_daily_task import execute_daily_task_with_candles
 from fourseasquant.database import (
     claim_automation_date,
     database_is_ready,
     database_path,
     initialize_database,
     release_automation_date,
-    scheduled_attempt_exists,
+    renew_automation_date_claim,
+    scheduled_attempt_count,
     snapshot_exists,
 )
 from fourseasquant.settings import read_settings
@@ -34,6 +40,75 @@ from fourseasquant.trading_calendar import (
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 CATCHUP_LOOKBACK_DAYS = 45
+RETRY_MINUTES = (0, 10, 30, 60)
+
+
+class TargetDateClaimLease:
+    def __init__(
+        self,
+        *,
+        path: Path,
+        target_date: date,
+        claim_id: str,
+        heartbeat_seconds: float,
+        now: Callable[[], datetime],
+    ) -> None:
+        self._path = path
+        self._target_date = target_date
+        self._claim_id = claim_id
+        self._heartbeat_seconds = heartbeat_seconds
+        self._now = now
+        self._stop = Event()
+        self._thread = Thread(
+            target=self._heartbeat_loop,
+            name=f"target-date-claim-{target_date.isoformat()}",
+            daemon=True,
+        )
+
+    @classmethod
+    def acquire(
+        cls,
+        path: Path,
+        target_date: date,
+        *,
+        claimed_at: datetime | None = None,
+        heartbeat_seconds: float = 60.0,
+        now: Callable[[], datetime] | None = None,
+    ) -> TargetDateClaimLease | None:
+        current = claimed_at or datetime.now(BEIJING)
+        claim_id = claim_automation_date(path, target_date, current)
+        if claim_id is None:
+            return None
+        return cls(
+            path=path,
+            target_date=target_date,
+            claim_id=claim_id,
+            heartbeat_seconds=heartbeat_seconds,
+            now=now or (lambda: datetime.now(BEIJING)),
+        )
+
+    def __enter__(self) -> TargetDateClaimLease:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=max(1.0, self._heartbeat_seconds))
+        release_automation_date(self._path, self._target_date, self._claim_id)
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stop.wait(self._heartbeat_seconds):
+            try:
+                renewed = renew_automation_date_claim(
+                    self._path,
+                    self._target_date,
+                    self._claim_id,
+                    self._now(),
+                )
+            except sqlite3.OperationalError:
+                continue
+            if not renewed:
+                return
 
 
 class NotificationEvent(BaseModel):
@@ -87,6 +162,7 @@ def run_scheduled_task(
 ) -> AutomationOutcome:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
     selected_path = path or database_path()
+    use_real_candles = path is None
     if not database_is_ready(selected_path):
         initialize_database(selected_path)
     target_date = current.date()
@@ -104,23 +180,37 @@ def run_scheduled_task(
             target_date=target_date,
             reason="非交易日",
         )
-    if not force and current.time().replace(tzinfo=None) < scheduled_time:
+    allowed_attempts = _allowed_scheduled_attempts(
+        current=current,
+        scheduled_time=scheduled_time,
+    )
+    if not force and allowed_attempts == 0:
         return AutomationOutcome(
             status="skipped",
             target_date=target_date,
             reason="尚未到自动更新时间",
         )
-    if not force and snapshot_exists(selected_path, target_date):
+    if not force and _target_data_is_complete(
+        selected_path,
+        target_date,
+        require_candles=use_real_candles,
+    ):
         return AutomationOutcome(
             status="skipped",
             target_date=target_date,
             reason="该交易日已发布",
         )
-    if not force and scheduled_attempt_exists(selected_path, target_date):
+    attempts = scheduled_attempt_count(selected_path, target_date)
+    if not force and attempts >= allowed_attempts:
+        final_retry_due = _final_retry_time(target_date, scheduled_time)
         return AutomationOutcome(
             status="skipped",
             target_date=target_date,
-            reason="该交易日已自动尝试，请在网站内手动重试",
+            reason=(
+                "自动重试已用尽，请在网站内手动重试"
+                if current >= final_retry_due
+                else "等待下一次自动重试"
+            ),
         )
     task = _execute_claimed_task(
         target_date=target_date,
@@ -128,6 +218,7 @@ def run_scheduled_task(
         path=selected_path,
         simulate_failure_stage=simulate_failure_stage,
         allow_existing=force,
+        use_real_candles=use_real_candles,
     )
     if task is None:
         return AutomationOutcome(
@@ -141,7 +232,24 @@ def run_scheduled_task(
         reason="自动任务完成" if task.status == "succeeded" else "自动任务失败",
         task=task,
     )
+    if (
+        outcome.status == "failed"
+        and not force
+        and simulate_failure_stage is None
+        and current < _final_retry_time(target_date, scheduled_time)
+    ):
+        return outcome
     return _notify(outcome, notifier or MacOSNotifier(), current)
+
+
+def _allowed_scheduled_attempts(*, current: datetime, scheduled_time: time) -> int:
+    base = datetime.combine(current.date(), scheduled_time, tzinfo=BEIJING)
+    return sum(current >= base + timedelta(minutes=minutes) for minutes in RETRY_MINUTES)
+
+
+def _final_retry_time(target_date: date, scheduled_time: time) -> datetime:
+    base = datetime.combine(target_date, scheduled_time, tzinfo=BEIJING)
+    return base + timedelta(minutes=RETRY_MINUTES[-1])
 
 
 def run_startup_catchup(
@@ -152,6 +260,7 @@ def run_startup_catchup(
 ) -> AutomationOutcome:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
     selected_path = path or database_path()
+    production_database = path is None
     if not database_is_ready(selected_path):
         initialize_database(selected_path)
     settings = read_settings(selected_path)
@@ -162,6 +271,7 @@ def run_startup_catchup(
     target_date = _latest_missing_trading_day(
         latest_due_date,
         selected_path,
+        require_latest_candles=production_database,
     )
     if target_date is None:
         return AutomationOutcome(
@@ -169,10 +279,14 @@ def run_startup_catchup(
             target_date=latest_due_date,
             reason=f"最近 {CATCHUP_LOOKBACK_DAYS} 日内没有缺失交易日",
         )
+    # 较早的缺口只补策略快照；最新应发布交易日必须同时补齐真实 K 线，
+    # 否则会出现“快照成功、行情仍旧”的伪完成状态。
+    use_real_candles = production_database and target_date == latest_due_date
     task = _execute_claimed_task(
         target_date=target_date,
         current=current,
         path=selected_path,
+        use_real_candles=use_real_candles,
     )
     if task is None:
         return AutomationOutcome(
@@ -204,21 +318,46 @@ def _latest_due_trading_day(current: datetime, scheduled_time: time) -> date:
     return candidate
 
 
-def _latest_missing_trading_day(latest_due_date: date, path: Path) -> date | None:
+def _latest_missing_trading_day(
+    latest_due_date: date,
+    path: Path,
+    *,
+    require_latest_candles: bool = False,
+) -> date | None:
     earliest = max(
         CALENDAR_SUPPORTED_START,
         latest_due_date - timedelta(days=CATCHUP_LOOKBACK_DAYS),
     )
     candidate = latest_due_date
     while candidate >= earliest:
-        if (
-            is_trading_day(candidate)
-            and not snapshot_exists(path, candidate)
-            and not scheduled_attempt_exists(path, candidate)
-        ):
-            return candidate
+        if is_trading_day(candidate):
+            snapshot_missing = not snapshot_exists(path, candidate)
+            latest_candles_missing = (
+                require_latest_candles
+                and candidate == latest_due_date
+                and latest_candle_publication(path, candidate) != candidate
+            )
+            if snapshot_missing or latest_candles_missing:
+                return candidate
         candidate -= timedelta(days=1)
     return None
+
+
+def resolve_manual_target_date(
+    requested_date: date,
+    *,
+    now: datetime | None = None,
+    path: Path | None = None,
+) -> date:
+    current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
+    if requested_date != current.date():
+        return requested_date
+    selected_path = path or database_path()
+    settings = read_settings(selected_path)
+    return _latest_due_trading_day(
+        current,
+        time.fromisoformat(settings.auto_update_time),
+    )
 
 
 def _execute_claimed_task(
@@ -228,13 +367,28 @@ def _execute_claimed_task(
     path: Path,
     simulate_failure_stage: FailureStage | None = None,
     allow_existing: bool = False,
+    use_real_candles: bool = False,
 ) -> TaskRunResponse | None:
-    claim_id = claim_automation_date(path, target_date, current)
-    if claim_id is None:
+    lease = TargetDateClaimLease.acquire(
+        path,
+        target_date,
+        claimed_at=current,
+    )
+    if lease is None:
         return None
-    try:
-        if not allow_existing and snapshot_exists(path, target_date):
+    with lease:
+        if not allow_existing and _target_data_is_complete(
+            path,
+            target_date,
+            require_candles=use_real_candles,
+        ):
             return None
+        if use_real_candles and simulate_failure_stage is None:
+            return execute_daily_task_with_candles(
+                target_date,
+                path=path,
+                trigger_method="scheduled",
+            )
         return execute_daily_task(
             target_date,
             path=path,
@@ -242,12 +396,23 @@ def _execute_claimed_task(
             simulate_failure_stage=simulate_failure_stage,
             propagate_unexpected=False,
         )
-    finally:
-        release_automation_date(path, target_date, claim_id)
 
 
 def _calendar_supports(candidate: date) -> bool:
     return CALENDAR_SUPPORTED_START <= candidate <= CALENDAR_SUPPORTED_END
+
+
+def _target_data_is_complete(
+    path: Path,
+    target_date: date,
+    *,
+    require_candles: bool,
+) -> bool:
+    if not snapshot_exists(path, target_date):
+        return False
+    if not require_candles:
+        return True
+    return latest_candle_publication(path, target_date) == target_date
 
 
 def _notify(

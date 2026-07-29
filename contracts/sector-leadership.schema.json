@@ -1,0 +1,253 @@
+{
+  "$defs": {
+    "SectorLeaderResult": {
+      "properties": {
+        "actual_data_date": {
+          "format": "date",
+          "title": "Actual Data Date",
+          "type": "string"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/TechnicalCandidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "leader_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Leader Code"
+        },
+        "leader_context": {
+          "anyOf": [
+            {
+              "enum": [
+                "with_trend",
+                "counter_trend",
+                "sideways"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Leader Context"
+        },
+        "leader_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Leader Name"
+        },
+        "membership_effective_date": {
+          "format": "date",
+          "title": "Membership Effective Date",
+          "type": "string"
+        },
+        "membership_stale": {
+          "title": "Membership Stale",
+          "type": "boolean"
+        },
+        "membership_version": {
+          "title": "Membership Version",
+          "type": "string"
+        },
+        "pending_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pending Code"
+        },
+        "pending_days": {
+          "title": "Pending Days",
+          "type": "integer"
+        },
+        "sector_id": {
+          "title": "Sector Id",
+          "type": "string"
+        },
+        "sector_name": {
+          "title": "Sector Name",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "insufficient_samples",
+            "no_qualified_candidate",
+            "pending_confirmation",
+            "confirmed",
+            "hard_invalidated"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "technical_strength": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Technical Strength"
+        },
+        "trend_id": {
+          "title": "Trend Id",
+          "type": "string"
+        },
+        "trend_state": {
+          "enum": [
+            "rising",
+            "falling",
+            "sideways"
+          ],
+          "title": "Trend State",
+          "type": "string"
+        },
+        "valid_member_count": {
+          "title": "Valid Member Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "actual_data_date",
+        "sector_id",
+        "sector_name",
+        "membership_version",
+        "membership_effective_date",
+        "membership_stale",
+        "trend_id",
+        "trend_state",
+        "status",
+        "leader_code",
+        "leader_name",
+        "technical_strength",
+        "leader_context",
+        "pending_code",
+        "pending_days",
+        "valid_member_count",
+        "candidates",
+        "explanation"
+      ],
+      "title": "SectorLeaderResult",
+      "type": "object"
+    },
+    "TechnicalCandidate": {
+      "properties": {
+        "active_breakout": {
+          "title": "Active Breakout",
+          "type": "boolean"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "qualification": {
+          "enum": [
+            "qualified",
+            "observation"
+          ],
+          "title": "Qualification",
+          "type": "string"
+        },
+        "rank": {
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "structure_score": {
+          "title": "Structure Score",
+          "type": "number"
+        },
+        "structure_state": {
+          "title": "Structure State",
+          "type": "string"
+        },
+        "structure_valid": {
+          "title": "Structure Valid",
+          "type": "boolean"
+        },
+        "total_score": {
+          "title": "Total Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "rank",
+        "code",
+        "name",
+        "total_score",
+        "structure_score",
+        "structure_state",
+        "structure_valid",
+        "active_breakout",
+        "qualification",
+        "reasons"
+      ],
+      "title": "TechnicalCandidate",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "algorithm_version": {
+      "title": "Algorithm Version",
+      "type": "string"
+    },
+    "days": {
+      "items": {
+        "format": "date",
+        "type": "string"
+      },
+      "title": "Days",
+      "type": "array"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/SectorLeaderResult"
+      },
+      "title": "Results",
+      "type": "array"
+    }
+  },
+  "required": [
+    "algorithm_version",
+    "days",
+    "results"
+  ],
+  "title": "ElectionReplayResult",
+  "type": "object"
+}

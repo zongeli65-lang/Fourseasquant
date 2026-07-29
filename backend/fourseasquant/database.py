@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import uuid
@@ -7,6 +8,16 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
+from zoneinfo import ZoneInfo
+
+from fourseasquant.core_strategy_repository import create_core_strategy_tables
+from fourseasquant.fundamental_repository import create_fundamental_tables
+from fourseasquant.industry_chain.control import initialize_runtime_control
+from fourseasquant.industry_chain.schema import create_industry_chain_core_tables
+from fourseasquant.industry_chain.source_registry import seed_source_registry
+from fourseasquant.market_environment import create_market_environment_tables
+from fourseasquant.public_opinion_repository import create_public_opinion_tables
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 @dataclass(frozen=True)
@@ -28,6 +39,64 @@ class TaskRunRow:
     error_summary: str | None
 
 
+@dataclass(frozen=True)
+class MarketFactsRow:
+    id: int
+    actual_data_date: date
+    source: str
+    payload_json: str
+    collected_at: datetime
+
+
+@dataclass(frozen=True)
+class HistoricalSecurityFactRow:
+    actual_data_date: date
+    code: str
+    name: str
+    open: float
+    high: float
+    low: float
+    close: float
+    previous_close: float
+    change_pct: float
+    volume: int
+    turnover_cny: int
+    listing_trading_days: int
+
+
+@dataclass(frozen=True)
+class HistoricalBenchmarkFactRow:
+    actual_data_date: date
+    name: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+@dataclass(frozen=True)
+class HistoricalMarketSummaryRow:
+    actual_data_date: date
+    benchmark_close: float
+    turnover_cny: int
+    security_count: int
+    advancers: int
+    decliners: int
+    unchanged: int
+
+
+@dataclass(frozen=True)
+class TechnicalScorePublicationRow:
+    version: str
+    official_start: date
+    official_end: date
+    qfq_source: str
+    symbol_count: int
+    score_count: int
+    published_at: datetime
+
+
 def database_path() -> Path:
     configured_path = os.environ.get("FOURSEASQUANT_DB_PATH")
     if configured_path:
@@ -37,7 +106,8 @@ def database_path() -> Path:
 
 def initialize_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS app_metadata (
@@ -94,6 +164,261 @@ def initialize_database(path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS market_fact_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actual_data_date TEXT NOT NULL,
+                source TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                collected_at TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                UNIQUE(actual_data_date, content_sha256)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_market_fact_snapshots_date_id
+            ON market_fact_snapshots (actual_data_date, id DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS historical_security_facts (
+                source TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                previous_close REAL NOT NULL,
+                change_pct REAL NOT NULL,
+                volume INTEGER NOT NULL,
+                turnover_cny INTEGER NOT NULL,
+                listing_trading_days INTEGER NOT NULL,
+                PRIMARY KEY (source, actual_data_date, code)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_historical_security_facts_date
+            ON historical_security_facts (source, actual_data_date, code)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS history_ingestion_progress (
+                source TEXT NOT NULL,
+                range_start TEXT NOT NULL,
+                range_end TEXT NOT NULL,
+                code TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                completed_at TEXT NOT NULL,
+                PRIMARY KEY (source, range_start, range_end, code)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS historical_benchmark_facts (
+                source TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                name TEXT NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume INTEGER NOT NULL,
+                PRIMARY KEY (source, actual_data_date)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS historical_market_daily_summary (
+                source TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                benchmark_close REAL NOT NULL,
+                turnover_cny INTEGER NOT NULL,
+                security_count INTEGER NOT NULL,
+                advancers INTEGER NOT NULL,
+                decliners INTEGER NOT NULL,
+                unchanged INTEGER NOT NULL,
+                PRIMARY KEY (source, actual_data_date)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS candle_dataset_publications (
+                actual_data_date TEXT PRIMARY KEY,
+                qfq_source TEXT NOT NULL DEFAULT 'akshare_sina_daily_qfq',
+                published_at TEXT NOT NULL
+            )
+            """
+        )
+        candle_publication_columns = {
+            cast(str, row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(candle_dataset_publications)"
+            )
+        }
+        if "qfq_source" not in candle_publication_columns:
+            connection.execute(
+                """
+                ALTER TABLE candle_dataset_publications
+                ADD COLUMN qfq_source TEXT NOT NULL
+                DEFAULT 'akshare_sina_daily_qfq'
+                """
+            )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS technical_score_versions (
+                version TEXT PRIMARY KEY,
+                parameters_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS technical_daily_scores (
+                version TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                board TEXT NOT NULL,
+                qfq_source TEXT NOT NULL,
+                ema3 REAL NOT NULL,
+                derivative REAL NOT NULL,
+                derivative_state TEXT NOT NULL,
+                zero_threshold REAL NOT NULL,
+                atr10 REAL NOT NULL,
+                structure_state TEXT NOT NULL,
+                structure_valid INTEGER NOT NULL,
+                active_breakout INTEGER NOT NULL,
+                structure_score REAL NOT NULL,
+                breakout_score REAL NOT NULL,
+                relative_strength_score REAL NOT NULL,
+                turnover_score REAL NOT NULL,
+                total_score REAL NOT NULL,
+                extrema_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                PRIMARY KEY (version, qfq_source, actual_data_date, code)
+            )
+            """
+        )
+        technical_score_primary_key = [
+            cast(str, row[1])
+            for row in sorted(
+                connection.execute("PRAGMA table_info(technical_daily_scores)"),
+                key=lambda row: cast(int, row[5]),
+            )
+            if cast(int, row[5]) > 0
+        ]
+        if technical_score_primary_key != [
+            "version",
+            "qfq_source",
+            "actual_data_date",
+            "code",
+        ]:
+            connection.execute(
+                "ALTER TABLE technical_daily_scores RENAME TO technical_daily_scores_v10"
+            )
+            connection.execute(
+                """
+                CREATE TABLE technical_daily_scores (
+                    version TEXT NOT NULL,
+                    actual_data_date TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    board TEXT NOT NULL,
+                    qfq_source TEXT NOT NULL,
+                    ema3 REAL NOT NULL,
+                    derivative REAL NOT NULL,
+                    derivative_state TEXT NOT NULL,
+                    zero_threshold REAL NOT NULL,
+                    atr10 REAL NOT NULL,
+                    structure_state TEXT NOT NULL,
+                    structure_valid INTEGER NOT NULL,
+                    active_breakout INTEGER NOT NULL,
+                    structure_score REAL NOT NULL,
+                    breakout_score REAL NOT NULL,
+                    relative_strength_score REAL NOT NULL,
+                    turnover_score REAL NOT NULL,
+                    total_score REAL NOT NULL,
+                    extrema_json TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    PRIMARY KEY (
+                        version, qfq_source, actual_data_date, code
+                    )
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO technical_daily_scores
+                SELECT * FROM technical_daily_scores_v10
+                """
+            )
+            connection.execute("DROP TABLE technical_daily_scores_v10")
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_technical_daily_scores_date_rank
+            ON technical_daily_scores (
+                version, qfq_source, actual_data_date, total_score DESC, code
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS technical_score_publications (
+                version TEXT NOT NULL,
+                official_start TEXT NOT NULL,
+                official_end TEXT NOT NULL,
+                qfq_source TEXT NOT NULL,
+                symbol_count INTEGER NOT NULL,
+                score_count INTEGER NOT NULL,
+                published_at TEXT NOT NULL,
+                PRIMARY KEY (version, official_start, official_end)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sector_membership_snapshots (
+                membership_version TEXT NOT NULL,
+                effective_date TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                published_at TEXT NOT NULL,
+                PRIMARY KEY (membership_version, effective_date)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sector_leader_election_results (
+                algorithm_version TEXT NOT NULL,
+                membership_version TEXT NOT NULL,
+                actual_data_date TEXT NOT NULL,
+                sector_id TEXT NOT NULL,
+                trend_id TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                published_at TEXT NOT NULL,
+                PRIMARY KEY (
+                    algorithm_version,
+                    membership_version,
+                    actual_data_date,
+                    sector_id
+                )
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS automation_claims (
                 target_date TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
@@ -139,13 +464,29 @@ def initialize_database(path: Path) -> None:
                 benchmark,
                 data_adapter,
                 new_stock_exclusion_days
-            ) VALUES (1, '16:30', '沪深 300', 'simulation', 20)
+            ) VALUES (1, '16:30', '沪深 300', 'simulation', 60)
             """
+        )
+        create_fundamental_tables(connection)
+        create_core_strategy_tables(connection)
+        create_public_opinion_tables(connection)
+        create_industry_chain_core_tables(connection)
+        create_market_environment_tables(connection)
+        industry_chain_initialized_at = datetime.now(
+            ZoneInfo("Asia/Shanghai")
+        )
+        seed_source_registry(
+            connection,
+            now=industry_chain_initialized_at,
+        )
+        initialize_runtime_control(
+            connection,
+            now=industry_chain_initialized_at,
         )
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '3')
+            VALUES ('schema_version', '31')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -153,7 +494,7 @@ def initialize_database(path: Path) -> None:
 
 def database_is_ready(path: Path) -> bool:
     try:
-        with sqlite3.connect(path) as connection:
+        with open_database_connection(path) as connection:
             row = cast(
                 tuple[str] | None,
                 connection.execute(
@@ -162,11 +503,304 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("3",)
+    return row == ("31",)
+
+
+def save_historical_market_summary(
+    path: Path,
+    *,
+    source: str,
+    summary: HistoricalMarketSummaryRow,
+) -> None:
+    with open_database_connection(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO historical_market_daily_summary (
+                source,
+                actual_data_date,
+                benchmark_close,
+                turnover_cny,
+                security_count,
+                advancers,
+                decliners,
+                unchanged
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, actual_data_date) DO UPDATE SET
+                benchmark_close = excluded.benchmark_close,
+                turnover_cny = excluded.turnover_cny,
+                security_count = excluded.security_count,
+                advancers = excluded.advancers,
+                decliners = excluded.decliners,
+                unchanged = excluded.unchanged
+            """,
+            (
+                source,
+                summary.actual_data_date.isoformat(),
+                summary.benchmark_close,
+                summary.turnover_cny,
+                summary.security_count,
+                summary.advancers,
+                summary.decliners,
+                summary.unchanged,
+            ),
+        )
+
+
+def save_historical_benchmark_fact(
+    path: Path,
+    *,
+    source: str,
+    fact: HistoricalBenchmarkFactRow,
+) -> None:
+    with open_database_connection(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO historical_benchmark_facts (
+                source,
+                actual_data_date,
+                name,
+                open,
+                high,
+                low,
+                close,
+                volume
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, actual_data_date) DO UPDATE SET
+                name = excluded.name,
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                volume = excluded.volume
+            """,
+            (
+                source,
+                fact.actual_data_date.isoformat(),
+                fact.name,
+                fact.open,
+                fact.high,
+                fact.low,
+                fact.close,
+                fact.volume,
+            ),
+        )
+
+
+def save_history_symbol_batch(
+    path: Path,
+    *,
+    source: str,
+    range_start: date,
+    range_end: date,
+    code: str,
+    facts: list[HistoricalSecurityFactRow],
+    completed_at: datetime,
+) -> None:
+    with open_database_connection(path) as connection:
+        with connection:
+            connection.executemany(
+                """
+                INSERT INTO historical_security_facts (
+                    source,
+                    actual_data_date,
+                    code,
+                    name,
+                    open,
+                    high,
+                    low,
+                    close,
+                    previous_close,
+                    change_pct,
+                    volume,
+                    turnover_cny,
+                    listing_trading_days
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, actual_data_date, code) DO UPDATE SET
+                    name = excluded.name,
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    previous_close = excluded.previous_close,
+                    change_pct = excluded.change_pct,
+                    volume = excluded.volume,
+                    turnover_cny = excluded.turnover_cny,
+                    listing_trading_days = excluded.listing_trading_days
+                """,
+                [
+                    (
+                        source,
+                        fact.actual_data_date.isoformat(),
+                        fact.code,
+                        fact.name,
+                        fact.open,
+                        fact.high,
+                        fact.low,
+                        fact.close,
+                        fact.previous_close,
+                        fact.change_pct,
+                        fact.volume,
+                        fact.turnover_cny,
+                        fact.listing_trading_days,
+                    )
+                    for fact in facts
+                ],
+            )
+            connection.execute(
+                """
+                INSERT INTO history_ingestion_progress (
+                    source,
+                    range_start,
+                    range_end,
+                    code,
+                    row_count,
+                    completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, range_start, range_end, code) DO UPDATE SET
+                    row_count = excluded.row_count,
+                    completed_at = excluded.completed_at
+                """,
+                (
+                    source,
+                    range_start.isoformat(),
+                    range_end.isoformat(),
+                    code,
+                    len(facts),
+                    completed_at.isoformat(),
+                ),
+            )
+
+
+def completed_history_symbols(
+    path: Path,
+    *,
+    source: str,
+    range_start: date,
+    range_end: date,
+) -> set[str]:
+    with open_database_connection(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT code
+            FROM history_ingestion_progress
+            WHERE source = ? AND range_start = ? AND range_end = ?
+            """,
+            (source, range_start.isoformat(), range_end.isoformat()),
+        ).fetchall()
+    return {cast(str, row[0]) for row in rows}
+
+
+def historical_security_facts_for_date(
+    path: Path,
+    *,
+    source: str,
+    actual_data_date: date,
+) -> list[HistoricalSecurityFactRow]:
+    with open_database_connection(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT actual_data_date, code, name, open, high, low, close,
+                   previous_close, change_pct, volume, turnover_cny,
+                   listing_trading_days
+            FROM historical_security_facts
+            WHERE source = ? AND actual_data_date = ?
+            ORDER BY code
+            """,
+            (source, actual_data_date.isoformat()),
+        ).fetchall()
+    return [
+        HistoricalSecurityFactRow(
+            actual_data_date=date.fromisoformat(cast(str, row[0])),
+            code=cast(str, row[1]),
+            name=cast(str, row[2]),
+            open=cast(float, row[3]),
+            high=cast(float, row[4]),
+            low=cast(float, row[5]),
+            close=cast(float, row[6]),
+            previous_close=cast(float, row[7]),
+            change_pct=cast(float, row[8]),
+            volume=cast(int, row[9]),
+            turnover_cny=cast(int, row[10]),
+            listing_trading_days=cast(int, row[11]),
+        )
+        for row in rows
+    ]
+
+
+def save_market_facts(
+    path: Path,
+    *,
+    actual_data_date: date,
+    source: str,
+    payload_json: str,
+    collected_at: datetime,
+) -> int:
+    content_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    with open_database_connection(path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO market_fact_snapshots (
+                actual_data_date,
+                source,
+                payload_json,
+                collected_at,
+                content_sha256
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                actual_data_date.isoformat(),
+                source,
+                payload_json,
+                collected_at.isoformat(),
+                content_sha256,
+            ),
+        )
+        if cursor.rowcount == 1:
+            return cast(int, cursor.lastrowid)
+        row = cast(
+            tuple[int],
+            connection.execute(
+                """
+                SELECT id
+                FROM market_fact_snapshots
+                WHERE actual_data_date = ? AND content_sha256 = ?
+                """,
+                (actual_data_date.isoformat(), content_sha256),
+            ).fetchone(),
+        )
+    return row[0]
+
+
+def latest_market_facts(
+    path: Path, actual_data_date: date
+) -> MarketFactsRow | None:
+    with open_database_connection(path) as connection:
+        row = cast(
+            tuple[int, str, str, str, str] | None,
+            connection.execute(
+                """
+                SELECT id, actual_data_date, source, payload_json, collected_at
+                FROM market_fact_snapshots
+                WHERE actual_data_date = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (actual_data_date.isoformat(),),
+            ).fetchone(),
+        )
+    if row is None:
+        return None
+    return MarketFactsRow(
+        id=row[0],
+        actual_data_date=date.fromisoformat(row[1]),
+        source=row[2],
+        payload_json=row[3],
+        collected_at=datetime.fromisoformat(row[4]),
+    )
 
 
 def latest_snapshot(path: Path, target_date: date) -> SnapshotRow | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[str, str, str] | None,
             connection.execute(
@@ -191,7 +825,7 @@ def latest_snapshot(path: Path, target_date: date) -> SnapshotRow | None:
 
 
 def latest_task_status(path: Path, target_date: date) -> str:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[str] | None,
             connection.execute(
@@ -209,7 +843,7 @@ def latest_task_status(path: Path, target_date: date) -> str:
 
 
 def snapshot_exists(path: Path, target_date: date) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             "SELECT 1 FROM daily_snapshots WHERE target_date = ?",
             (target_date.isoformat(),),
@@ -224,7 +858,7 @@ def create_task_run(
     *,
     trigger_method: str = "manual",
 ) -> int:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             INSERT INTO task_runs (
@@ -249,8 +883,9 @@ def publish_snapshot(
     payload_json: str,
     published_at: datetime,
     simulate_failure: bool = False,
+    technical_publication: TechnicalScorePublicationRow | None = None,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.execute(
                 """
@@ -268,6 +903,30 @@ def publish_snapshot(
             )
             if simulate_failure:
                 raise RuntimeError("模拟事务发布失败")
+            if technical_publication is not None:
+                connection.execute(
+                    """
+                    INSERT INTO technical_score_publications (
+                        version, official_start, official_end, qfq_source,
+                        symbol_count, score_count, published_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(version, official_start, official_end)
+                    DO UPDATE SET
+                        qfq_source = excluded.qfq_source,
+                        symbol_count = excluded.symbol_count,
+                        score_count = excluded.score_count,
+                        published_at = excluded.published_at
+                    """,
+                    (
+                        technical_publication.version,
+                        technical_publication.official_start.isoformat(),
+                        technical_publication.official_end.isoformat(),
+                        technical_publication.qfq_source,
+                        technical_publication.symbol_count,
+                        technical_publication.score_count,
+                        published_at.isoformat(),
+                    ),
+                )
             connection.execute(
                 """
                 UPDATE task_runs
@@ -280,7 +939,7 @@ def publish_snapshot(
 
 
 def update_task_stage(path: Path, task_id: int, stage: str) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             "UPDATE task_runs SET stage = ? WHERE id = ?",
             (stage, task_id),
@@ -295,7 +954,7 @@ def fail_task_run(
     stage: str,
     error_summary: str,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             UPDATE task_runs
@@ -307,7 +966,7 @@ def fail_task_run(
 
 
 def task_runs(path: Path, *, limit: int = 20) -> list[TaskRunRow]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT id, trigger_method, target_date, started_at, finished_at,
@@ -336,7 +995,7 @@ def task_runs(path: Path, *, limit: int = 20) -> list[TaskRunRow]:
 
 
 def latest_task_run(path: Path, target_date: date) -> TaskRunRow | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT id, trigger_method, target_date, started_at, finished_at,
@@ -344,6 +1003,36 @@ def latest_task_run(path: Path, target_date: date) -> TaskRunRow | None:
             FROM task_runs
             WHERE target_date = ?
             ORDER BY id DESC
+            LIMIT 1
+            """,
+            (target_date.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return TaskRunRow(
+        id=cast(int, row[0]),
+        trigger_method=cast(str, row[1]),
+        target_date=date.fromisoformat(cast(str, row[2])),
+        started_at=datetime.fromisoformat(cast(str, row[3])),
+        finished_at=datetime.fromisoformat(cast(str, row[4])) if row[4] else None,
+        stage=cast(str, row[5]),
+        status=cast(str, row[6]),
+        error_summary=cast(str | None, row[7]),
+    )
+
+
+def latest_task_run_on_or_before(
+    path: Path,
+    target_date: date,
+) -> TaskRunRow | None:
+    with open_database_connection(path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, trigger_method, target_date, started_at, finished_at,
+                   stage, status, error_summary
+            FROM task_runs
+            WHERE target_date <= ?
+            ORDER BY target_date DESC, id DESC
             LIMIT 1
             """,
             (target_date.isoformat(),),
@@ -371,11 +1060,12 @@ def claim_automation_date(
 ) -> str | None:
     stale_before = claimed_at.timestamp() - stale_after_seconds
     claim_id = str(uuid.uuid4())
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         existing = connection.execute(
             "SELECT claimed_at, claim_id FROM automation_claims WHERE target_date = ?",
             (target_date.isoformat(),),
         ).fetchone()
+        replaced_stale_claim = False
         if existing is not None:
             existing_claim = cast(str, existing[0])
             existing_claim_id = cast(str, existing[1])
@@ -385,6 +1075,17 @@ def claim_automation_date(
                     "DELETE FROM automation_claims WHERE target_date = ? AND claim_id = ?",
                     (target_date.isoformat(), existing_claim_id),
                 )
+                replaced_stale_claim = True
+        if replaced_stale_claim:
+            connection.execute(
+                """
+                UPDATE task_runs
+                SET finished_at = ?, status = 'failed',
+                    error_summary = '任务进程中断，运行租约已过期'
+                WHERE target_date = ? AND status = 'running'
+                """,
+                (claimed_at.isoformat(), target_date.isoformat()),
+            )
         cursor = connection.execute(
             "INSERT OR IGNORE INTO automation_claims (target_date, claimed_at, claim_id) VALUES (?, ?, ?)",
             (target_date.isoformat(), claimed_at.isoformat(), claim_id),
@@ -393,15 +1094,51 @@ def claim_automation_date(
 
 
 def release_automation_date(path: Path, target_date: date, claim_id: str) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             "DELETE FROM automation_claims WHERE target_date = ? AND claim_id = ?",
             (target_date.isoformat(), claim_id),
         )
 
 
+def renew_automation_date_claim(
+    path: Path,
+    target_date: date,
+    claim_id: str,
+    renewed_at: datetime,
+) -> bool:
+    with open_database_connection(path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE automation_claims
+            SET claimed_at = ?
+            WHERE target_date = ? AND claim_id = ?
+            """,
+            (renewed_at.isoformat(), target_date.isoformat(), claim_id),
+        )
+    return cursor.rowcount == 1
+
+
+def active_automation_claim_exists(
+    path: Path,
+    target_date: date,
+    checked_at: datetime,
+    *,
+    stale_after_seconds: int = 7_200,
+) -> bool:
+    with open_database_connection(path) as connection:
+        row = connection.execute(
+            "SELECT claimed_at FROM automation_claims WHERE target_date = ?",
+            (target_date.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return False
+    claimed_at = datetime.fromisoformat(cast(str, row[0]))
+    return claimed_at.timestamp() >= checked_at.timestamp() - stale_after_seconds
+
+
 def scheduled_attempt_exists(path: Path, target_date: date) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT 1 FROM task_runs
@@ -411,3 +1148,18 @@ def scheduled_attempt_exists(path: Path, target_date: date) -> bool:
             (target_date.isoformat(),),
         ).fetchone()
     return row is not None
+
+
+def scheduled_attempt_count(path: Path, target_date: date) -> int:
+    with open_database_connection(path) as connection:
+        row = cast(
+            tuple[int],
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM task_runs
+                WHERE target_date = ? AND trigger_method = 'scheduled'
+                """,
+                (target_date.isoformat(),),
+            ).fetchone(),
+        )
+    return row[0]

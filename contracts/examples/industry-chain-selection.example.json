@@ -1,0 +1,91 @@
+{
+  "schema_version": "industry-chain-selection-v0.1",
+  "selection_id": "ics-20260725-example-001",
+  "selection_version": 1,
+  "event_id": "event-example-supply-001",
+  "rules_version": "industry-chain-leader-spec-v0.1",
+  "model": {
+    "model_id": "qwen3:14b",
+    "model_revision": "example-revision",
+    "quantization": "Q4_K_M",
+    "runtime_id": "ollama-example",
+    "temperature": 0
+  },
+  "prompt_version": "industry-chain-hunt-prompt-v0.1",
+  "knowledge_version": "industry-chain-knowledge-v0.1",
+  "stock_universe_version": "main-board-universe-example",
+  "trigger_method": "historical_replay",
+  "as_of_time": "2026-07-25T10:00:00+08:00",
+  "started_at": "2026-07-25T10:00:20+08:00",
+  "completed_at": "2026-07-25T10:08:00+08:00",
+  "status": "selected",
+  "decision_authority": "candidate_selection_only",
+  "immutable": true,
+  "contains_trading_instruction": false,
+  "event": {
+    "title": "示例原料供给收缩",
+    "event_time": "2026-07-25T09:55:00+08:00",
+    "trigger_types": [
+      "supply_contraction"
+    ],
+    "affected_product_or_service": "示例材料",
+    "gap_node": "上游材料供给",
+    "industry_evidence_refs": [
+      "evidence-industry-example-001"
+    ],
+    "policy_only": false
+  },
+  "candidates": [
+    {
+      "rank": 1,
+      "code": "600001",
+      "name": "示例股份",
+      "chain_node": "上游材料生产",
+      "benefit_type": "direct",
+      "profit_transmission_path": [
+        "供给收缩",
+        "示例材料可售价格上升",
+        "公司现有产能贡献增加"
+      ],
+      "business_materiality": {
+        "main_business_confirmed": true,
+        "disclosure_mode": "official_qualitative",
+        "revenue_share": null,
+        "gross_profit_share": null,
+        "official_qualitative_basis": "正式报告将示例材料列为核心主营，未披露具体占比",
+        "evidence_refs": [
+          "evidence-company-example-001"
+        ]
+      },
+      "ownership_relation": {
+        "relation_type": "listed_company_direct",
+        "holding_share": null,
+        "attributable_profit_share": null,
+        "official_qualitative_basis": "由上市公司直接经营",
+        "evidence_refs": [
+          "evidence-company-example-001"
+        ]
+      },
+      "realization": {
+        "status": "current",
+        "expected_start": "2026-07-25",
+        "basis": "正式披露显示现有产能已投入生产",
+        "evidence_refs": [
+          "evidence-company-example-002"
+        ]
+      },
+      "industry_evidence_refs": [
+        "evidence-industry-example-001"
+      ],
+      "company_evidence_refs": [
+        "evidence-company-example-001",
+        "evidence-company-example-002"
+      ],
+      "uncertainties": [
+        "公司未披露示例材料具体毛利润占比"
+      ]
+    }
+  ],
+  "summary": "示例事件形成供给收缩，候选公司具有当前可用产能和正式主营定性证据。",
+  "unresolved_items": []
+}

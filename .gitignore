@@ -21,6 +21,7 @@ frontend/dist/
 test-results/
 work/
 playwright-report/
+outputs/verification/
 
 # Fourseasquant 本地运行数据
 data/

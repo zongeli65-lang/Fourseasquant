@@ -32,7 +32,7 @@ def launch_agent_definition(
         "ProgramArguments": [
             str(python_executable or Path(sys.executable)),
             "-m",
-            "fourseasquant.automation",
+            "fourseasquant.scheduled_pipeline",
             "run-scheduled",
         ],
         "WorkingDirectory": str(repository_root),

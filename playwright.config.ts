@@ -9,6 +9,8 @@ const testDatabase = join(
   testWorkDirectory,
   `fourseasquant-browser-${process.pid}-${Date.now()}.db`,
 );
+const webPort = process.env.FOURSEASQUANT_WEB_PORT ?? "5173";
+const baseURL = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
   testDir: "tests/browser",
@@ -18,14 +20,15 @@ export default defineConfig({
   reporter: "line",
   globalTeardown: "tests/browser/global-teardown.ts",
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL,
     channel: "chrome",
     headless: true,
   },
   webServer: {
     command: "npm run dev",
-    url: "http://127.0.0.1:5173",
-    reuseExistingServer: false,
+    url: baseURL,
+    reuseExistingServer:
+      process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === "1",
     timeout: 30_000,
     gracefulShutdown: {
       signal: "SIGTERM",
