@@ -9,18 +9,18 @@ import {
 } from "react-router-dom";
 
 import { BrandMark } from "./BrandMark";
-import {
-  StrategyPerformance,
-  type StrategyPerformanceData,
-} from "./StrategyPerformance";
+import { type StrategyPerformanceData } from "./StrategyPerformance";
 import { ReviewNotes } from "./ReviewNotes";
-import { PortfolioReview, type PortfolioReviewData } from "./PortfolioReview";
+import { type PortfolioReviewData } from "./PortfolioReview";
 import { SettingsPanel } from "./SettingsPanel";
 import { RealMarketDashboard } from "./RealMarketDashboard";
+import { MarketEnvironmentPage } from "./MarketEnvironmentPage";
 import { KlineExplorer, type InstrumentSelection } from "./KlineExplorer";
 import { TechnicalLeadershipPanel } from "./TechnicalLeadershipPanel";
 import { FundamentalsPage } from "./FundamentalsPage";
-import { movementTone, signedPercentage } from "./marketFormatting";
+import { IndustryChainLeadersPage } from "./IndustryChainLeadersPage";
+import { PublicOpinionPage } from "./PublicOpinionPage";
+import { CoreStrategyPage } from "./CoreStrategyPage";
 
 type HealthStatus = {
   application: string;
@@ -98,37 +98,58 @@ const pages: PageDefinition[] = [
     description: "指数、广度、排行榜与成交额热力图。",
   },
   {
+    path: "/market-environment",
+    label: "市场环境",
+    shortLabel: "03",
+    title: "机械市场环境",
+    description: "上证、深证、市场广度与成交容量的独立趋势判断。",
+  },
+  {
     path: "/quotes",
     label: "行情",
-    shortLabel: "03",
+    shortLabel: "04",
     title: "行情浏览",
     description: "查看规则范围内股票与指数的日 K、成交量和 RSI。",
   },
   {
     path: "/technical-scores",
     label: "技术评分",
-    shortLabel: "04",
+    shortLabel: "05",
     title: "全市场技术评分",
     description: "独立查看全市场量价评分、结构证据与历史数据状态。",
   },
   {
     path: "/strategy",
     label: "策略",
-    shortLabel: "05",
-    title: "策略复盘",
-    description: "查看策略净值、基准表现、组合明细与交易记录。",
+    shortLabel: "06",
+    title: "核心交易策略",
+    description: "查看调查准备、机会判断、模拟订单与完整组合状态。",
   },
   {
     path: "/fundamentals",
     label: "基本面",
-    shortLabel: "06",
+    shortLabel: "07",
     title: "个人基本面分析",
     description: "全量基本面股票库、板块筛选与个股独立证据。",
   },
   {
+    path: "/industry-chain-leaders",
+    label: "产业链龙头",
+    shortLabel: "08",
+    title: "产业链供需龙头",
+    description: "由本地智能体追查供需、产业链传导和实质主营受益。",
+  },
+  {
+    path: "/public-opinion",
+    label: "舆论监测",
+    shortLabel: "09",
+    title: "公开讨论舆论监测",
+    description: "分平台查看讨论数量、方向、时效和采集完整性。",
+  },
+  {
     path: "/tasks",
     label: "任务",
-    shortLabel: "07",
+    shortLabel: "10",
     title: "任务中心",
     description: "运行目标日期任务、查看失败状态与历史记录。",
   },
@@ -229,24 +250,6 @@ function connectionCopy(connection: ConnectionState): {
   };
 }
 
-function PageEmptyState({
-  title,
-  detail,
-}: {
-  title: string;
-  detail: string;
-}) {
-  return (
-    <section className="page-empty-state">
-      <BrandMark compact />
-      <div>
-        <h2>{title}</h2>
-        <p>{detail}</p>
-      </div>
-    </section>
-  );
-}
-
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -313,6 +316,10 @@ export function App() {
       { replace: true },
     );
   }, [location.pathname, location.search, navigate, targetDate]);
+
+  useEffect(() => {
+    setSelectedInstrument(initialInstrument());
+  }, [location.search]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -562,29 +569,9 @@ export function App() {
                       <small>{formatBeijingDateTime(dashboardData?.last_updated_at ?? null)}</small>
                     </article>
                     <article>
-                      <span>策略当日收益</span>
-                      <strong
-                        className={
-                          snapshot
-                            ? `metric-value--${movementTone(
-                                snapshot.strategy_performance.daily_summary.strategy_return_pct,
-                              )}`
-                            : undefined
-                        }
-                      >
-                        {snapshot
-                          ? signedPercentage(
-                              snapshot.strategy_performance.daily_summary.strategy_return_pct,
-                            )
-                          : "等待运行"}
-                      </strong>
-                      <small>
-                        {snapshot
-                          ? `超额 ${signedPercentage(
-                              snapshot.strategy_performance.daily_summary.excess_return_pct,
-                            )}`
-                          : "尚无策略结果"}
-                      </small>
+                      <span>核心策略</span>
+                      <strong>独立策略页</strong>
+                      <small>调查、机会与模拟组合均以核心策略发布为准</small>
                     </article>
                   </section>
 
@@ -608,6 +595,10 @@ export function App() {
               }
             />
             <Route
+              path="/market-environment"
+              element={<MarketEnvironmentPage targetDate={targetDate} />}
+            />
+            <Route
               path="/quotes"
               element={
                 <KlineExplorer
@@ -628,28 +619,19 @@ export function App() {
             />
             <Route
               path="/strategy"
-              element={
-                <>
-                  {snapshot ? (
-                    <>
-                      <StrategyPerformance data={snapshot.strategy_performance} />
-                      <PortfolioReview
-                        data={snapshot.portfolio_review}
-                        onSelectSecurity={selectInstrument}
-                      />
-                    </>
-                  ) : (
-                    <PageEmptyState
-                      title="尚无策略结果"
-                      detail="在任务中心运行目标日期任务后，这里会展示策略、基准、持仓与交易。"
-                    />
-                  )}
-                </>
-              }
+              element={<CoreStrategyPage targetDate={targetDate} />}
             />
             <Route
               path="/fundamentals"
               element={<FundamentalsPage targetDate={targetDate} />}
+            />
+            <Route
+              path="/industry-chain-leaders"
+              element={<IndustryChainLeadersPage />}
+            />
+            <Route
+              path="/public-opinion"
+              element={<PublicOpinionPage targetDate={targetDate} />}
             />
             <Route
               path="/tasks"

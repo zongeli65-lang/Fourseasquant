@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from datetime import date
+from contextlib import asynccontextmanager, suppress
+from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -38,7 +38,17 @@ from fourseasquant.candlesticks import (
     read_candle_series,
     search_eligible_securities,
 )
-from fourseasquant.automation import TargetDateClaimLease, run_startup_catchup
+from fourseasquant.core_strategy_api import router as core_strategy_router
+from fourseasquant.core_strategy_runtime import (
+    advance_core_strategy_automation,
+    next_core_strategy_automation_date,
+)
+from fourseasquant.automation import (
+    BEIJING,
+    TargetDateClaimLease,
+    resolve_manual_target_date,
+    run_startup_catchup,
+)
 
 from fourseasquant.daily_snapshots import (
     DashboardResponse,
@@ -90,6 +100,23 @@ from fourseasquant.fundamental_lynch_automation import (
     LynchAutomationOutcome,
     run_scheduled_lynch_update,
 )
+from fourseasquant.industry_chain.api import router as industry_chain_router
+from fourseasquant.market_environment import (
+    MarketEnvironmentHistory,
+    MarketEnvironmentRefreshResult,
+    MarketEnvironmentSnapshot,
+    MarketEnvironmentUnavailable,
+    read_market_environment,
+    read_market_environment_history,
+    refresh_market_environment,
+)
+from fourseasquant.public_opinion_api import (
+    batch_controller,
+    router as public_opinion_router,
+)
+from fourseasquant.public_opinion_secrets import (
+    clear_deepseek_runtime_cache,
+)
 from fourseasquant.review_notes import (
     ReviewResponse,
     ReviewWriteRequest,
@@ -128,11 +155,27 @@ APPLICATION_NAME = "Fourseasquant"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    clear_deepseek_runtime_cache()
     initialize_database(database_path())
     catchup_task: asyncio.Task[None] | None = None
+    strategy_task: asyncio.Task[None] | None = None
     if os.environ.get("FOURSEASQUANT_ENABLE_STARTUP_CATCHUP", "0") == "1":
         catchup_task = asyncio.create_task(_run_startup_catchup())
+    if (
+        os.environ.get(
+            "FOURSEASQUANT_ENABLE_CORE_STRATEGY_AUTOMATION",
+            "0",
+        )
+        == "1"
+    ):
+        strategy_task = asyncio.create_task(
+            _run_core_strategy_automation_loop()
+        )
     yield
+    if strategy_task:
+        strategy_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await strategy_task
     if catchup_task:
         await catchup_task
 
@@ -145,7 +188,43 @@ async def _run_startup_catchup() -> None:
         pass
 
 
+async def _run_core_strategy_automation_loop() -> None:
+    """网站常驻进程负责持续推进调查批次和模拟仓位。"""
+
+    while True:
+        try:
+            current = datetime.now(BEIJING)
+            path = database_path()
+            latest_due_date = resolve_manual_target_date(
+                current.date(),
+                now=current,
+                path=path,
+            )
+            target_date = await asyncio.to_thread(
+                next_core_strategy_automation_date,
+                path,
+                latest_due_date=latest_due_date,
+            )
+            if target_date is not None:
+                await asyncio.to_thread(
+                    advance_core_strategy_automation,
+                    path,
+                    target_date=target_date,
+                    now=current,
+                    start_opinion_batch=batch_controller.start,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 运行层已记录可公开的失败摘要；后台循环必须保活等待下一次重试。
+            pass
+        await asyncio.sleep(30)
+
+
 app = FastAPI(title=APPLICATION_NAME, lifespan=lifespan)
+app.include_router(core_strategy_router)
+app.include_router(industry_chain_router)
+app.include_router(public_opinion_router)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["127.0.0.1", "localhost", "testserver"],
@@ -155,7 +234,7 @@ app.add_middleware(
     allow_origins=[
         os.environ.get("FOURSEASQUANT_WEB_ORIGIN", "http://127.0.0.1:5173")
     ],
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -243,6 +322,52 @@ def real_market_dashboard(target_date: date) -> RealMarketDashboard:
         return read_real_market_dashboard(database_path(), target_date)
     except RealMarketDataNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/market-environment",
+    response_model=MarketEnvironmentSnapshot,
+)
+def market_environment(target_date: date) -> MarketEnvironmentSnapshot:
+    try:
+        return read_market_environment(
+            database_path(),
+            requested_date=target_date,
+        )
+    except MarketEnvironmentUnavailable as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/market-environment/history",
+    response_model=MarketEnvironmentHistory,
+)
+def market_environment_history(
+    end_date: date,
+    limit: int = Query(default=60, ge=1, le=500),
+) -> MarketEnvironmentHistory:
+    return read_market_environment_history(
+        database_path(),
+        requested_end_date=end_date,
+        limit=limit,
+    )
+
+
+@app.post(
+    "/api/market-environment/refresh",
+    response_model=MarketEnvironmentRefreshResult,
+    status_code=201,
+)
+def refresh_market_environment_endpoint(
+    request: DailyTaskRequest,
+) -> MarketEnvironmentRefreshResult:
+    try:
+        return refresh_market_environment(
+            database_path(),
+            requested_date=request.target_date,
+        )
+    except MarketEnvironmentUnavailable as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get(
@@ -646,20 +771,24 @@ def _run_claimed_manual_task(
     trigger_method: Literal["manual", "retry"],
 ) -> TaskRunResponse:
     path = database_path()
+    effective_target_date = resolve_manual_target_date(
+        target_date,
+        path=path,
+    )
     lease = TargetDateClaimLease.acquire(
         path,
-        target_date,
+        effective_target_date,
     )
     if lease is None:
         raise HTTPException(status_code=409, detail="该目标日期已有任务正在运行")
     with lease:
         if os.environ.get("FOURSEASQUANT_ENABLE_FAILURE_SIMULATION") == "1":
             return execute_daily_task(
-                target_date,
+                effective_target_date,
                 trigger_method=trigger_method,
             )
         return execute_daily_task_with_candles(
-            target_date,
+            effective_target_date,
             trigger_method=trigger_method,
         )
 
@@ -720,9 +849,13 @@ if FRONTEND_DISTRIBUTION.is_dir():
     for frontend_route in (
         "/overview",
         "/market",
+        "/market-environment",
         "/quotes",
+        "/technical-scores",
         "/strategy",
         "/fundamentals",
+        "/public-opinion",
+        "/industry-chain-leaders",
         "/tasks",
     ):
         app.add_api_route(

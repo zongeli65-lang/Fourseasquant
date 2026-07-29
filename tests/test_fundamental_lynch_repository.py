@@ -130,7 +130,7 @@ def test_failed_daily_batch_preserves_previous_complete_publication(
         ).fetchone() == (2,)
 
 
-def test_schema_seventeen_contains_lynch_publication_tables(
+def test_schema_nineteen_contains_lynch_publication_tables(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "schema.db"
@@ -147,7 +147,7 @@ def test_schema_seventeen_contains_lynch_publication_tables(
             )
         }
 
-    assert version == ("17",)
+    assert version == ("31",)
     assert {
         "lynch_financial_base_batches",
         "lynch_financial_bases",

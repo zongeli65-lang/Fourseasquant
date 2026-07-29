@@ -111,22 +111,8 @@ class RealMarketDashboard(BaseModel):
 def read_real_market_dashboard(
     path: Path, requested_date: date
 ) -> RealMarketDashboard:
+    actual_data_date = _latest_actual_data_date(path, requested_date)
     with sqlite3.connect(path) as connection:
-        actual_row = cast(
-            tuple[str] | None,
-            connection.execute(
-                """
-                SELECT MAX(actual_data_date)
-                FROM historical_security_facts
-                WHERE source = ? AND actual_data_date <= ?
-                """,
-                (HISTORY_SOURCE, requested_date.isoformat()),
-            ).fetchone(),
-        )
-        if actual_row is None or actual_row[0] is None:
-            raise RealMarketDataNotFound("目标日期前没有 AKShare 真实日频数据")
-        actual_data_date = date.fromisoformat(actual_row[0])
-
         trend_rows = connection.execute(
             """
             SELECT facts.actual_data_date,
@@ -338,14 +324,14 @@ def _latest_actual_data_date(path: Path, requested_date: date) -> date:
             connection.execute(
                 """
                 SELECT MAX(actual_data_date)
-                FROM historical_security_facts
+                FROM historical_market_daily_summary
                 WHERE source = ? AND actual_data_date <= ?
                 """,
                 (HISTORY_SOURCE, requested_date.isoformat()),
             ).fetchone(),
         )
     if row is None or row[0] is None:
-        raise RealMarketDataNotFound("目标日期前没有 AKShare 真实日频数据")
+        raise RealMarketDataNotFound("目标日期前没有完整发布的 AKShare 真实日频数据")
     return date.fromisoformat(row[0])
 
 

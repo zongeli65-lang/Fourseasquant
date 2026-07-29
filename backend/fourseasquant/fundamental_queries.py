@@ -9,7 +9,6 @@ from typing import Literal, cast
 from pydantic import BaseModel, Field
 
 from fourseasquant.discussion_sentiment import (
-    CombinedDiscussionSignal,
     DiscussionPlatform,
     PlatformDiscussionAggregate,
 )
@@ -46,8 +45,6 @@ OverviewSortField = Literal[
     "lynch_market_percentile",
     "true_money_signal_score",
     "discussion_date",
-    "heat_percentile",
-    "weighted_sentiment",
 ]
 SortOrder = Literal["asc", "desc"]
 CapitalActionDataStatus = Literal["ready", "stale", "failed", "unavailable"]
@@ -97,7 +94,6 @@ class DiscussionDayView(BaseModel):
     code: str
     eastmoney_guba: PlatformDiscussionAggregate | None
     xueqiu: PlatformDiscussionAggregate | None
-    combined: CombinedDiscussionSignal | None
     eastmoney_reference_count: int
     xueqiu_reference_count: int
 
@@ -459,15 +455,6 @@ def read_discussion_series(
             """,
             tuple(parameters),
         ).fetchall()
-        combined_rows = connection.execute(
-            f"""
-            SELECT actual_date, heat_percentile, weighted_sentiment
-            FROM discussion_daily_combined_signals
-            WHERE {where_clause}
-            ORDER BY actual_date DESC
-            """,
-            tuple(parameters),
-        ).fetchall()
         reference_rows = connection.execute(
             f"""
             SELECT platform, actual_date, COUNT(*)
@@ -499,16 +486,6 @@ def read_discussion_series(
             heat_percentile=cast(float | None, row[8]),
             likes_missing=bool(row[9]),
         )
-    combined: dict[date, CombinedDiscussionSignal] = {}
-    for row in combined_rows:
-        actual_date = date.fromisoformat(cast(str, row[0]))
-        dates.add(actual_date)
-        combined[actual_date] = CombinedDiscussionSignal(
-            actual_date=actual_date,
-            code=code,
-            heat_percentile=cast(float, row[1]),
-            weighted_sentiment=cast(float, row[2]),
-        )
     reference_counts = {
         (
             date.fromisoformat(cast(str, row[1])),
@@ -524,7 +501,6 @@ def read_discussion_series(
                 (actual_date, "eastmoney_guba")
             ),
             xueqiu=platforms.get((actual_date, "xueqiu")),
-            combined=combined.get(actual_date),
             eastmoney_reference_count=reference_counts.get(
                 (actual_date, "eastmoney_guba"), 0
             ),
@@ -740,9 +716,7 @@ def _overview_item(
     discussion: DiscussionDayView | None,
 ) -> FundamentalOverviewItem:
     if monthly is not None and discussion is not None:
-        status: FundamentalDataStatus = (
-            "complete" if discussion.combined is not None else "partial"
-        )
+        status: FundamentalDataStatus = "complete"
     elif monthly is not None or discussion is not None:
         status = "partial"
     else:
@@ -764,7 +738,6 @@ def _overview_sort_value(
 ) -> str | float | date | None:
     monthly = item.monthly.snapshot if item.monthly else None
     lynch = item.lynch
-    combined = item.discussion.combined if item.discussion else None
     values: dict[OverviewSortField, str | float | date | None] = {
         "code": item.code,
         "name": item.name,
@@ -786,12 +759,6 @@ def _overview_sort_value(
         ),
         "discussion_date": (
             item.discussion.actual_date if item.discussion else None
-        ),
-        "heat_percentile": (
-            combined.heat_percentile if combined else None
-        ),
-        "weighted_sentiment": (
-            combined.weighted_sentiment if combined else None
         ),
     }
     return values[sort_by]
@@ -866,20 +833,12 @@ def _read_latest_discussion_map(
     parameters: tuple[object, ...] = ()
     if target_date is not None:
         date_filter = "WHERE actual_date <= ?"
-        parameters = (target_date.isoformat(), target_date.isoformat())
+        parameters = (target_date.isoformat(),)
     latest_cte = f"""
-        WITH available_dates AS (
-            SELECT code, actual_date
+        WITH latest AS (
+            SELECT code, MAX(actual_date) AS actual_date
             FROM discussion_daily_aggregates
             {date_filter}
-            UNION
-            SELECT code, actual_date
-            FROM discussion_daily_combined_signals
-            {date_filter}
-        ),
-        latest AS (
-            SELECT code, MAX(actual_date) AS actual_date
-            FROM available_dates
             GROUP BY code
         )
     """
@@ -911,18 +870,6 @@ def _read_latest_discussion_map(
             INNER JOIN latest
                 ON latest.code = daily.code
                AND latest.actual_date = daily.actual_date
-            """,
-            parameters,
-        ).fetchall()
-        combined_rows = connection.execute(
-            f"""
-            {latest_cte}
-            SELECT combined.actual_date, combined.code,
-                   combined.heat_percentile, combined.weighted_sentiment
-            FROM discussion_daily_combined_signals AS combined
-            INNER JOIN latest
-                ON latest.code = combined.code
-               AND latest.actual_date = combined.actual_date
             """,
             parameters,
         ).fetchall()
@@ -962,18 +909,6 @@ def _read_latest_discussion_map(
             heat_percentile=cast(float | None, row[9]),
             likes_missing=bool(row[10]),
         )
-    combined: dict[str, CombinedDiscussionSignal] = {}
-    for row in combined_rows:
-        code = cast(str, row[1])
-        actual_date = date.fromisoformat(cast(str, row[0]))
-        if latest_dates.get(code) != actual_date:
-            continue
-        combined[code] = CombinedDiscussionSignal(
-            actual_date=actual_date,
-            code=code,
-            heat_percentile=cast(float, row[2]),
-            weighted_sentiment=cast(float, row[3]),
-        )
     reference_counts: dict[tuple[str, DiscussionPlatform], int] = {}
     for row in reference_rows:
         code = cast(str, row[2])
@@ -989,7 +924,6 @@ def _read_latest_discussion_map(
             code=code,
             eastmoney_guba=platforms.get((code, "eastmoney_guba")),
             xueqiu=platforms.get((code, "xueqiu")),
-            combined=combined.get(code),
             eastmoney_reference_count=reference_counts.get(
                 (code, "eastmoney_guba"), 0
             ),

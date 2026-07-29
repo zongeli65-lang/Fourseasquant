@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -18,9 +19,10 @@ from fourseasquant.akshare_history import (
     build_akshare_qfq_history_importer,
 )
 from fourseasquant.candlesticks import (
+    discard_staged_candle_attempt,
     import_index_candles,
     latest_candle_publication,
-    publish_complete_candle_dates,
+    promote_staged_candle_dates,
 )
 from fourseasquant.settings import read_settings
 
@@ -51,77 +53,91 @@ def refresh_one_year_candles(
     import akshare as ak  # type: ignore[import-untyped]
 
     settings = read_settings(path)
-    raw = build_akshare_one_year_history_importer(
-        max_workers=max_workers,
-        progress_callback=progress_callback,
-        include_technical_boards=True,
-    ).import_one_year(
-        path=path,
-        requested_end_date=requested_end_date,
-        new_stock_exclusion_days=settings.new_stock_exclusion_days,
-        warmup_trading_days=warmup_trading_days,
-    )
-    try:
-        _ensure_import_ready(raw, requested_end_date, label="不复权股票日线")
-    except CandleRefreshError:
-        _revoke_candle_publication(path, requested_end_date)
-        raise
     version_tag = requested_end_date.isoformat()
     qfq_source = f"{HISTORY_QFQ_SOURCE}:{version_tag}"
-    adjusted = build_akshare_qfq_history_importer(
-        max_workers=max_workers,
-        progress_callback=progress_callback,
-        version_tag=version_tag,
-        include_technical_boards=True,
-    ).import_one_year(
-        path=path,
-        requested_end_date=requested_end_date,
-        new_stock_exclusion_days=settings.new_stock_exclusion_days,
-        warmup_trading_days=warmup_trading_days,
-    )
+    attempt_version_tag = f"{version_tag}:attempt-{uuid4().hex}"
+    attempt_raw_source = f"{HISTORY_SOURCE}:{attempt_version_tag}"
+    attempt_qfq_source = f"{HISTORY_QFQ_SOURCE}:{attempt_version_tag}"
     try:
+        raw = build_akshare_one_year_history_importer(
+            max_workers=max_workers,
+            progress_callback=progress_callback,
+            include_technical_boards=True,
+            version_tag=attempt_version_tag,
+        ).import_one_year(
+            path=path,
+            requested_end_date=requested_end_date,
+            new_stock_exclusion_days=settings.new_stock_exclusion_days,
+            warmup_trading_days=warmup_trading_days,
+        )
+        _ensure_import_ready(raw, requested_end_date, label="不复权股票日线")
+        adjusted = build_akshare_qfq_history_importer(
+            max_workers=max_workers,
+            progress_callback=progress_callback,
+            version_tag=attempt_version_tag,
+            include_technical_boards=True,
+        ).import_one_year(
+            path=path,
+            requested_end_date=requested_end_date,
+            new_stock_exclusion_days=settings.new_stock_exclusion_days,
+            warmup_trading_days=warmup_trading_days,
+        )
         _ensure_import_ready(adjusted, requested_end_date, label="前复权股票日线")
-    except CandleRefreshError:
-        _revoke_candle_publication(path, requested_end_date)
-        raise
-    _revoke_candle_publication(path, requested_end_date)
-    if security_daily_fact_snapshot is not None:
-        coverage_snapshot = security_daily_fact_snapshot()
-    elif requested_end_date == datetime.now(ZoneInfo("Asia/Shanghai")).date():
-        coverage_snapshot = ak.stock_zh_a_spot()
-    else:
-        _revoke_candle_publication(path, requested_end_date)
-        raise CandleRefreshError("历史目标日缺少个股日频事实覆盖证据")
-    _validate_security_daily_fact_coverage(
-        path,
-        requested_end_date=requested_end_date,
-        raw_range_start=raw.range_start,
-        qfq_range_start=adjusted.range_start,
-        qfq_source=qfq_source,
-        new_stock_exclusion_days=settings.new_stock_exclusion_days,
-        listing_dates=raw.listing_dates,
-        snapshot=coverage_snapshot,
-    )
-    import_index_candles(
-        path,
-        requested_end_date=requested_end_date,
-        index_history=lambda symbol: ak.stock_zh_index_daily(symbol=symbol),
-        warmup_trading_days=warmup_trading_days,
-    )
-    official_start = _one_year_start(adjusted.range_end)
-    published_days = publish_complete_candle_dates(
-        path,
-        qfq_source=qfq_source,
-        publication_start=official_start,
-    )
-    latest = latest_candle_publication(path, requested_end_date)
-    if latest != adjusted.range_end:
-        raise CandleRefreshError("股票与五指数未形成同日完整 K 线版本")
-    return CandleRefreshSummary(
-        actual_data_date=latest,
-        symbol_count=adjusted.completed_symbols,
-        published_days=published_days,
-    )
+        if security_daily_fact_snapshot is not None:
+            coverage_snapshot = security_daily_fact_snapshot()
+        elif requested_end_date == datetime.now(ZoneInfo("Asia/Shanghai")).date():
+            coverage_snapshot = ak.stock_zh_a_spot()
+        else:
+            raise CandleRefreshError("历史目标日缺少个股日频事实覆盖证据")
+        _validate_security_daily_fact_coverage(
+            path,
+            requested_end_date=requested_end_date,
+            raw_range_start=raw.range_start,
+            qfq_range_start=adjusted.range_start,
+            raw_source=attempt_raw_source,
+            qfq_source=attempt_qfq_source,
+            new_stock_exclusion_days=settings.new_stock_exclusion_days,
+            listing_dates=raw.listing_dates,
+            snapshot=coverage_snapshot,
+        )
+        import_index_candles(
+            path,
+            requested_end_date=requested_end_date,
+            index_history=lambda symbol: ak.stock_zh_index_daily(symbol=symbol),
+            warmup_trading_days=warmup_trading_days,
+            version_tag=attempt_version_tag,
+        )
+        official_start = _one_year_start(adjusted.range_end)
+        published_days = promote_staged_candle_dates(
+            path,
+            raw_staging_source=attempt_raw_source,
+            qfq_staging_source=attempt_qfq_source,
+            qfq_source=qfq_source,
+            index_version_tag=attempt_version_tag,
+            raw_range_start=raw.range_start,
+            qfq_range_start=adjusted.range_start,
+            range_end=adjusted.range_end,
+            publication_start=official_start,
+        )
+        latest = latest_candle_publication(path, requested_end_date)
+        if latest != adjusted.range_end:
+            raise CandleRefreshError("股票与五指数未形成同日完整 K 线版本")
+        return CandleRefreshSummary(
+            actual_data_date=latest,
+            symbol_count=adjusted.completed_symbols,
+            published_days=published_days,
+        )
+    finally:
+        try:
+            discard_staged_candle_attempt(
+                path,
+                raw_staging_source=attempt_raw_source,
+                qfq_staging_source=attempt_qfq_source,
+                index_version_tag=attempt_version_tag,
+            )
+        except sqlite3.Error:
+            # 尝试数据从不被读取；清理失败不能覆盖原始刷新错误。
+            pass
 
 
 def _one_year_start(range_end: date) -> date:
@@ -156,6 +172,7 @@ def _validate_security_daily_fact_coverage(
     requested_end_date: date,
     raw_range_start: date,
     qfq_range_start: date,
+    raw_source: str = HISTORY_SOURCE,
     qfq_source: str,
     new_stock_exclusion_days: int,
     listing_dates: dict[str, date],
@@ -179,10 +196,11 @@ def _validate_security_daily_fact_coverage(
         previously_eligible = _eligible_codes(
             connection,
             target=target,
+            raw_source=raw_source,
             new_stock_exclusion_days=new_stock_exclusion_days,
             listing_dates=listing_dates,
         )
-        raw_codes = _codes_for_source_date(connection, HISTORY_SOURCE, target)
+        raw_codes = _codes_for_source_date(connection, raw_source, target)
         qfq_codes = _codes_for_source_date(connection, qfq_source, target)
     expected_codes = active_codes & previously_eligible
     if not expected_codes:
@@ -195,6 +213,7 @@ def _validate_security_daily_fact_coverage(
             target_date=requested_end_date,
             raw_range_start=raw_range_start,
             qfq_range_start=qfq_range_start,
+            raw_source=raw_source,
             qfq_source=qfq_source,
             missing_raw=missing_raw,
             missing_qfq=missing_qfq,
@@ -207,10 +226,11 @@ def _eligible_codes(
     connection: sqlite3.Connection,
     *,
     target: str,
+    raw_source: str,
     new_stock_exclusion_days: int,
     listing_dates: dict[str, date],
 ) -> set[str]:
-    benchmark_dates = [
+    benchmark_dates = {
         str(row[0])
         for row in connection.execute(
             """
@@ -220,7 +240,18 @@ def _eligible_codes(
             """,
             (HISTORY_SOURCE, target),
         )
-    ]
+    }
+    benchmark_dates.update(
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT DISTINCT actual_data_date
+            FROM historical_security_facts
+            WHERE source = ? AND actual_data_date <= ?
+            """,
+            (raw_source, target),
+        )
+    )
     eligible: set[str] = set()
     eligible.update(
         code
@@ -272,13 +303,14 @@ def _invalidate_incomplete_target(
     target_date: date,
     raw_range_start: date,
     qfq_range_start: date,
+    raw_source: str,
     qfq_source: str,
     missing_raw: set[str],
     missing_qfq: set[str],
 ) -> None:
     with sqlite3.connect(path) as connection:
         for source, range_start, codes in (
-            (HISTORY_SOURCE, raw_range_start, missing_raw),
+            (raw_source, raw_range_start, missing_raw),
             (qfq_source, qfq_range_start, missing_qfq),
         ):
             connection.executemany(
@@ -296,21 +328,3 @@ def _invalidate_incomplete_target(
                     for code in sorted(codes)
                 ],
             )
-        connection.execute(
-            """
-            DELETE FROM candle_dataset_publications
-            WHERE actual_data_date = ?
-            """,
-            (target_date.isoformat(),),
-        )
-
-
-def _revoke_candle_publication(path: Path, target_date: date) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
-            DELETE FROM candle_dataset_publications
-            WHERE actual_data_date = ?
-            """,
-            (target_date.isoformat(),),
-        )

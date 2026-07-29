@@ -169,7 +169,9 @@ test("技术评分页按单项独立排行，并与策略页保持独立", async
 
   await page.getByRole("link", { name: "策略" }).click();
   await expect(page).toHaveURL(/\/strategy\?target_date=2026-07-24$/);
-  await expect(page.getByRole("heading", { name: "策略复盘" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "核心交易策略" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "全市场技术指标排行榜" }),
   ).toHaveCount(0);

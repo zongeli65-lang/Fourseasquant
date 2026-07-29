@@ -12,7 +12,6 @@ from fourseasquant.database import initialize_database
 from fourseasquant.discussion_sentiment import (
     DiscussionPost,
     aggregate_platform_discussion,
-    combine_platform_aggregates,
 )
 from fourseasquant.fundamental_discovery import (
     BoardCandidate,
@@ -40,7 +39,6 @@ from fourseasquant.fundamental_repository import (
     FundamentalUpdateAttempt,
     save_board_candidate_snapshot,
     save_capital_action_snapshot,
-    save_combined_discussion_signal,
     save_discussion_day,
     save_personal_fundamental_monthly_snapshot,
     save_fundamental_update_attempt,
@@ -262,14 +260,6 @@ def _seed_fundamentals(database: Path) -> None:
         aggregate=xueqiu,
         created_at=discussion_time,
     )
-    combined = combine_platform_aggregates(eastmoney, xueqiu)
-    assert combined is not None
-    save_combined_discussion_signal(
-        database,
-        combined,
-        created_at=discussion_time,
-    )
-
     partial_time = datetime(2026, 7, 24, 11, tzinfo=BEIJING)
     partial_post = DiscussionPost(
         platform="eastmoney_guba",
@@ -350,7 +340,6 @@ def test_fundamental_read_endpoints_expose_only_persisted_snapshots(
     assert discussion.status_code == 200
     assert discussion.json()["eastmoney_guba"]["post_count"] == 1
     assert discussion.json()["xueqiu"]["post_count"] == 1
-    assert discussion.json()["combined"] is not None
     assert discussion.json()["eastmoney_reference_count"] == 1
     assert future_board_is_hidden.status_code == 404
     assert capital_actions.status_code == 200
@@ -557,7 +546,7 @@ def test_fundamental_overview_filters_searches_sorts_and_preserves_missing_data(
             params={
                 "target_date": "2026-07-24",
                 "board_code": "BK001",
-                "sort_by": "heat_percentile",
+                "sort_by": "as_of_date",
                 "sort_order": "desc",
             },
         )
@@ -584,14 +573,12 @@ def test_fundamental_overview_filters_searches_sorts_and_preserves_missing_data(
         item["code"] for item in all_overview.json()["items"]
     }
     assert payload["items"][1]["monthly"] is None
-    assert payload["items"][1]["discussion"]["combined"] is None
     assert payload["items"][1]["data_status"] == "partial"
     assert searched.status_code == 200
     assert [item["name"] for item in searched.json()["items"]] == ["浦发银行"]
     assert partial.status_code == 200
     assert partial.json()["eastmoney_guba"] is not None
     assert partial.json()["xueqiu"] is None
-    assert partial.json()["combined"] is None
 
 
 def test_fundamental_overview_contains_lynch_results_and_uses_boards_as_filter(

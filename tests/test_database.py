@@ -63,7 +63,7 @@ def test_version_one_task_history_is_migrated_with_meaningful_stages(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
         stage = connection.execute("SELECT stage FROM task_runs").fetchone()
-    assert version == ("17",)
+    assert version == ("31",)
     assert stage == ("completed",)
 
 
@@ -95,7 +95,7 @@ def test_version_two_automation_claims_gain_owned_claim_ids(tmp_path: Path) -> N
         claim = connection.execute(
             "SELECT target_date, claim_id FROM automation_claims"
         ).fetchone()
-    assert version == ("17",)
+    assert version == ("31",)
     assert claim is not None
     assert claim[0] == "2026-07-21"
     assert claim[1]
@@ -125,6 +125,42 @@ def test_stale_owner_cannot_release_newer_automation_claim(tmp_path: Path) -> No
     assert third_claim is None
 
     release_automation_date(database, target, second_claim)
+
+
+def test_replacing_stale_claim_marks_interrupted_task_failed(tmp_path: Path) -> None:
+    database = tmp_path / "stale-running-task.db"
+    initialize_database(database)
+    target = date(2026, 7, 27)
+    started = datetime(2026, 7, 27, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    first_claim = claim_automation_date(database, target, started)
+    assert first_claim is not None
+    task_id = create_task_run(
+        database,
+        target,
+        started,
+        trigger_method="retry",
+    )
+
+    replacement = claim_automation_date(
+        database,
+        target,
+        started + timedelta(seconds=7_201),
+    )
+
+    assert replacement is not None
+    with sqlite3.connect(database) as connection:
+        task = connection.execute(
+            """
+            SELECT status, finished_at, error_summary
+            FROM task_runs
+            WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+    assert task is not None
+    assert task[0] == "failed"
+    assert task[1] is not None
+    assert task[2] == "任务进程中断，运行租约已过期"
 
 
 def test_renewed_automation_claim_cannot_be_taken_over_after_two_hours(
@@ -206,7 +242,7 @@ def test_version_fifteen_capital_batches_migrate_to_unknown_insider_window(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
     assert migrated == (0,)
-    assert version == ("17",)
+    assert version == ("31",)
 
 
 def test_snapshot_and_technical_publication_activate_atomically(

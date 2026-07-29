@@ -642,6 +642,23 @@ class LocalApplicationTest(unittest.TestCase):
         self.assertIn("Fourseasquant", page)
         self.assertIn("应用状态", page)
         self.assertIn('data-theme="light"', page)
+
+    def test_production_frontend_serves_every_direct_navigation_page(self) -> None:
+        for route in ("/market-environment", "/technical-scores"):
+            with self.subTest(route=route):
+                with urlopen(
+                    f"http://127.0.0.1:{self.port}{route}",
+                    timeout=1,
+                ) as response:
+                    page = response.read().decode("utf-8")
+
+                self.assertEqual(response.status, 200)
+                self.assertIn(
+                    "<title>Fourseasquant · A 股量化工作台</title>",
+                    page,
+                )
+
+
 class DevelopmentCommandTest(unittest.TestCase):
     def test_one_command_starts_the_frontend_backend_and_database(self) -> None:
         api_port = available_port()

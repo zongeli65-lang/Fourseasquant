@@ -134,6 +134,72 @@ def test_real_market_dashboard_uses_latest_available_date_and_compact_metrics(
     assert dashboard.trend[-1].advancer_ratio == pytest.approx(100 / 3)
 
 
+def test_partial_newer_day_never_hides_latest_complete_dashboard(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "partial-newer-day.db"
+    initialize_database(database)
+    collected_at = datetime(
+        2026, 7, 27, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
+    complete_date = date(2026, 7, 24)
+    partial_date = date(2026, 7, 27)
+    save_historical_benchmark_fact(
+        database,
+        source="akshare_sina_daily",
+        fact=HistoricalBenchmarkFactRow(
+            actual_data_date=complete_date,
+            name="沪深 300",
+            open=4_700,
+            high=4_720,
+            low=4_690,
+            close=4_710,
+            volume=30_000_000_000,
+        ),
+    )
+    save_history_symbol_batch(
+        database,
+        source="akshare_sina_daily",
+        range_start=complete_date,
+        range_end=complete_date,
+        code="600000",
+        facts=[
+            _security(complete_date, "600000", "浦发银行", 1.0, 100_000_000)
+        ],
+        completed_at=collected_at,
+    )
+    save_historical_market_summary(
+        database,
+        source="akshare_sina_daily",
+        summary=HistoricalMarketSummaryRow(
+            actual_data_date=complete_date,
+            benchmark_close=4_710,
+            turnover_cny=100_000_000,
+            security_count=1,
+            advancers=1,
+            decliners=0,
+            unchanged=0,
+        ),
+    )
+    save_history_symbol_batch(
+        database,
+        source="akshare_sina_daily",
+        range_start=partial_date,
+        range_end=partial_date,
+        code="000001",
+        facts=[
+            _security(partial_date, "000001", "平安银行", 2.0, 120_000_000)
+        ],
+        completed_at=collected_at,
+    )
+
+    dashboard = read_real_market_dashboard(database, date(2026, 7, 28))
+
+    assert dashboard.actual_data_date == complete_date
+    assert dashboard.benchmark.close == 4_710
+    assert [item.code for item in dashboard.gainers] == ["600000"]
+
+
 def test_real_market_activity_and_paginated_details_use_true_price_limits(
     tmp_path: Path,
 ) -> None:
@@ -206,6 +272,24 @@ def test_real_market_activity_and_paginated_details_use_true_price_limits(
             code=code,
             facts=facts,
             completed_at=collected_at,
+        )
+    for index, trading_date in enumerate(trading_dates):
+        changes = (
+            leading_facts[index].change_pct,
+            falling_facts[index].change_pct,
+        )
+        save_historical_market_summary(
+            database,
+            source="akshare_sina_daily",
+            summary=HistoricalMarketSummaryRow(
+                actual_data_date=trading_date,
+                benchmark_close=4700 + trading_date.day,
+                turnover_cny=200_000_000,
+                security_count=2,
+                advancers=sum(change > 0 for change in changes),
+                decliners=sum(change < 0 for change in changes),
+                unchanged=sum(change == 0 for change in changes),
+            ),
         )
 
     dashboard = read_real_market_dashboard(database, trading_dates[-1])

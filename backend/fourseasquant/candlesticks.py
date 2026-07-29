@@ -82,8 +82,9 @@ class CandleDataNotFound(RuntimeError):
     pass
 
 
-def index_source(symbol: str) -> str:
-    return f"{INDEX_SOURCE_PREFIX}{symbol}"
+def index_source(symbol: str, *, version_tag: str | None = None) -> str:
+    source = f"{INDEX_SOURCE_PREFIX}{symbol}"
+    return f"{source}:{version_tag}" if version_tag else source
 
 
 def import_index_candles(
@@ -92,6 +93,7 @@ def import_index_candles(
     requested_end_date: date,
     index_history: IndexHistoryFactory,
     warmup_trading_days: int = 0,
+    version_tag: str | None = None,
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for symbol, name in INDEXES.items():
@@ -122,7 +124,7 @@ def import_index_candles(
                 continue
             save_historical_benchmark_fact(
                 path,
-                source=index_source(symbol),
+                source=index_source(symbol, version_tag=version_tag),
                 fact=HistoricalBenchmarkFactRow(
                     actual_data_date=trading_date,
                     name=name,
@@ -146,40 +148,327 @@ def publish_complete_candle_dates(
 ) -> int:
     publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
     with sqlite3.connect(path) as connection:
-        index_dates: list[set[str]] = []
-        for symbol in INDEXES:
-            rows = connection.execute(
-                "SELECT actual_data_date FROM historical_benchmark_facts WHERE source = ?",
-                (index_source(symbol),),
-            ).fetchall()
-            index_dates.append({cast(str, row[0]) for row in rows})
-        if any(not dates for dates in index_dates):
-            return 0
-        candidates = set.intersection(*index_dates)
-        published = 0
         with connection:
-            for date_text in sorted(candidates):
-                if (
-                    publication_start is not None
-                    and date_text < publication_start.isoformat()
-                ):
-                    continue
-                raw_codes = _codes_for_date(connection, HISTORY_SOURCE, date_text)
-                qfq_codes = _codes_for_date(connection, qfq_source, date_text)
-                if not raw_codes or raw_codes != qfq_codes:
-                    continue
-                cursor = connection.execute(
-                    """
-                    INSERT INTO candle_dataset_publications (
-                        actual_data_date, qfq_source, published_at
-                    ) VALUES (?, ?, ?)
-                    ON CONFLICT(actual_data_date) DO UPDATE SET
-                        qfq_source = excluded.qfq_source,
-                        published_at = excluded.published_at
-                    """,
-                    (date_text, qfq_source, publication_time.isoformat()),
+            return _publish_complete_candle_dates(
+                connection,
+                qfq_source=qfq_source,
+                published_at=publication_time,
+                publication_start=publication_start,
+            )
+
+
+def promote_staged_candle_dates(
+    path: Path,
+    *,
+    raw_staging_source: str,
+    qfq_staging_source: str,
+    qfq_source: str,
+    index_version_tag: str,
+    raw_range_start: date,
+    qfq_range_start: date,
+    range_end: date,
+    publication_start: date,
+    published_at: datetime | None = None,
+) -> int:
+    publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
+    with sqlite3.connect(path) as connection:
+        with connection:
+            _replace_security_source_range(
+                connection,
+                staging_source=raw_staging_source,
+                published_source=HISTORY_SOURCE,
+                range_start=raw_range_start,
+                range_end=range_end,
+            )
+            _replace_security_source_range(
+                connection,
+                staging_source=qfq_staging_source,
+                published_source=qfq_source,
+                range_start=qfq_range_start,
+                range_end=range_end,
+            )
+            for symbol in INDEXES:
+                _replace_benchmark_source_range(
+                    connection,
+                    staging_source=index_source(
+                        symbol,
+                        version_tag=index_version_tag,
+                    ),
+                    published_source=index_source(symbol),
+                    required_end=range_end,
                 )
-                published += 1 if cursor.rowcount else 0
+            _replace_benchmark_source_range(
+                connection,
+                staging_source=index_source(
+                    "sh000300",
+                    version_tag=index_version_tag,
+                ),
+                published_source=HISTORY_SOURCE,
+                required_end=range_end,
+            )
+            _replace_historical_market_summaries(
+                connection,
+                publication_start=publication_start,
+                range_end=range_end,
+            )
+            connection.execute(
+                """
+                DELETE FROM candle_dataset_publications
+                WHERE actual_data_date = ?
+                """,
+                (range_end.isoformat(),),
+            )
+            published = _publish_complete_candle_dates(
+                connection,
+                qfq_source=qfq_source,
+                published_at=publication_time,
+                publication_start=publication_start,
+            )
+            target_publication = connection.execute(
+                """
+                SELECT qfq_source
+                FROM candle_dataset_publications
+                WHERE actual_data_date = ?
+                """,
+                (range_end.isoformat(),),
+            ).fetchone()
+            if target_publication != (qfq_source,):
+                raise CandleDataNotFound(
+                    "股票与五指数未形成目标日期完整 K 线版本"
+                )
+            _discard_staged_candle_attempt(
+                connection,
+                raw_staging_source=raw_staging_source,
+                qfq_staging_source=qfq_staging_source,
+                index_version_tag=index_version_tag,
+            )
+            return published
+
+
+def discard_staged_candle_attempt(
+    path: Path,
+    *,
+    raw_staging_source: str,
+    qfq_staging_source: str,
+    index_version_tag: str,
+) -> None:
+    with sqlite3.connect(path) as connection:
+        with connection:
+            _discard_staged_candle_attempt(
+                connection,
+                raw_staging_source=raw_staging_source,
+                qfq_staging_source=qfq_staging_source,
+                index_version_tag=index_version_tag,
+            )
+
+
+def _discard_staged_candle_attempt(
+    connection: sqlite3.Connection,
+    *,
+    raw_staging_source: str,
+    qfq_staging_source: str,
+    index_version_tag: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM historical_security_facts WHERE source IN (?, ?)",
+        (raw_staging_source, qfq_staging_source),
+    )
+    connection.execute(
+        "DELETE FROM history_ingestion_progress WHERE source IN (?, ?)",
+        (raw_staging_source, qfq_staging_source),
+    )
+    connection.executemany(
+        "DELETE FROM historical_benchmark_facts WHERE source = ?",
+        [
+            (index_source(symbol, version_tag=index_version_tag),)
+            for symbol in INDEXES
+        ],
+    )
+
+
+def _replace_security_source_range(
+    connection: sqlite3.Connection,
+    *,
+    staging_source: str,
+    published_source: str,
+    range_start: date,
+    range_end: date,
+) -> None:
+    start = range_start.isoformat()
+    end = range_end.isoformat()
+    staged_count = cast(
+        int,
+        connection.execute(
+            """
+            SELECT COUNT(*) FROM historical_security_facts
+            WHERE source = ? AND actual_data_date BETWEEN ? AND ?
+            """,
+            (staging_source, start, end),
+        ).fetchone()[0],
+    )
+    if staged_count == 0:
+        raise CandleDataNotFound("待发布股票日线版本为空")
+    connection.execute(
+        """
+        DELETE FROM historical_security_facts
+        WHERE source = ? AND actual_data_date BETWEEN ? AND ?
+        """,
+        (published_source, start, end),
+    )
+    connection.execute(
+        """
+        INSERT INTO historical_security_facts (
+            source, actual_data_date, code, name, open, high, low, close,
+            previous_close, change_pct, volume, turnover_cny,
+            listing_trading_days
+        )
+        SELECT ?, actual_data_date, code, name, open, high, low, close,
+               previous_close, change_pct, volume, turnover_cny,
+               listing_trading_days
+        FROM historical_security_facts
+        WHERE source = ? AND actual_data_date BETWEEN ? AND ?
+        """,
+        (published_source, staging_source, start, end),
+    )
+    connection.execute(
+        """
+        DELETE FROM history_ingestion_progress
+        WHERE source = ? AND range_start = ? AND range_end = ?
+        """,
+        (published_source, start, end),
+    )
+    connection.execute(
+        """
+        INSERT OR REPLACE INTO history_ingestion_progress (
+            source, range_start, range_end, code, row_count, completed_at
+        )
+        SELECT ?, range_start, range_end, code, row_count, completed_at
+        FROM history_ingestion_progress
+        WHERE source = ? AND range_start = ? AND range_end = ?
+        """,
+        (published_source, staging_source, start, end),
+    )
+
+
+def _replace_benchmark_source_range(
+    connection: sqlite3.Connection,
+    *,
+    staging_source: str,
+    published_source: str,
+    required_end: date,
+) -> None:
+    bounds = connection.execute(
+        """
+        SELECT MIN(actual_data_date), MAX(actual_data_date)
+        FROM historical_benchmark_facts
+        WHERE source = ?
+        """,
+        (staging_source,),
+    ).fetchone()
+    if bounds is None or bounds[0] is None or bounds[1] is None:
+        raise CandleDataNotFound("待发布指数日线版本为空")
+    start = cast(str, bounds[0])
+    end = cast(str, bounds[1])
+    if end != required_end.isoformat():
+        raise CandleDataNotFound("指数日线未到目标日期，拒绝发布")
+    connection.execute(
+        """
+        DELETE FROM historical_benchmark_facts
+        WHERE source = ? AND actual_data_date BETWEEN ? AND ?
+        """,
+        (published_source, start, end),
+    )
+    connection.execute(
+        """
+        INSERT INTO historical_benchmark_facts (
+            source, actual_data_date, name, open, high, low, close, volume
+        )
+        SELECT ?, actual_data_date, name, open, high, low, close, volume
+        FROM historical_benchmark_facts
+        WHERE source = ? AND actual_data_date BETWEEN ? AND ?
+        """,
+        (published_source, staging_source, start, end),
+    )
+
+
+def _replace_historical_market_summaries(
+    connection: sqlite3.Connection,
+    *,
+    publication_start: date,
+    range_end: date,
+) -> None:
+    start = publication_start.isoformat()
+    end = range_end.isoformat()
+    connection.execute(
+        """
+        DELETE FROM historical_market_daily_summary
+        WHERE source = ? AND actual_data_date BETWEEN ? AND ?
+        """,
+        (HISTORY_SOURCE, start, end),
+    )
+    connection.execute(
+        """
+        INSERT INTO historical_market_daily_summary (
+            source, actual_data_date, benchmark_close, turnover_cny,
+            security_count, advancers, decliners, unchanged
+        )
+        SELECT ?, facts.actual_data_date, benchmark.close,
+               SUM(facts.turnover_cny), COUNT(*),
+               SUM(CASE WHEN facts.change_pct > 0 THEN 1 ELSE 0 END),
+               SUM(CASE WHEN facts.change_pct < 0 THEN 1 ELSE 0 END),
+               SUM(CASE WHEN facts.change_pct = 0 THEN 1 ELSE 0 END)
+        FROM historical_security_facts AS facts
+        JOIN historical_benchmark_facts AS benchmark
+          ON benchmark.source = ?
+         AND benchmark.actual_data_date = facts.actual_data_date
+        WHERE facts.source = ?
+          AND facts.actual_data_date BETWEEN ? AND ?
+        GROUP BY facts.actual_data_date, benchmark.close
+        """,
+        (HISTORY_SOURCE, HISTORY_SOURCE, HISTORY_SOURCE, start, end),
+    )
+
+
+def _publish_complete_candle_dates(
+    connection: sqlite3.Connection,
+    *,
+    qfq_source: str,
+    published_at: datetime,
+    publication_start: date | None,
+) -> int:
+    index_dates: list[set[str]] = []
+    for symbol in INDEXES:
+        rows = connection.execute(
+            "SELECT actual_data_date FROM historical_benchmark_facts WHERE source = ?",
+            (index_source(symbol),),
+        ).fetchall()
+        index_dates.append({cast(str, row[0]) for row in rows})
+    if any(not dates for dates in index_dates):
+        return 0
+    candidates = set.intersection(*index_dates)
+    published = 0
+    for date_text in sorted(candidates):
+        if (
+            publication_start is not None
+            and date_text < publication_start.isoformat()
+        ):
+            continue
+        raw_codes = _codes_for_date(connection, HISTORY_SOURCE, date_text)
+        qfq_codes = _codes_for_date(connection, qfq_source, date_text)
+        if not raw_codes or raw_codes != qfq_codes:
+            continue
+        cursor = connection.execute(
+            """
+            INSERT INTO candle_dataset_publications (
+                actual_data_date, qfq_source, published_at
+            ) VALUES (?, ?, ?)
+            ON CONFLICT(actual_data_date) DO UPDATE SET
+                qfq_source = excluded.qfq_source,
+                published_at = excluded.published_at
+            """,
+            (date_text, qfq_source, published_at.isoformat()),
+        )
+        published += 1 if cursor.rowcount else 0
     return published
 
 

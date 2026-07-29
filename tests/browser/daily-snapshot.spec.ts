@@ -28,7 +28,7 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await expect(page.getByTestId("actual-data-date")).toHaveText("2026-07-20");
   await expect(page.getByText("保守模拟快照")).toBeVisible();
 
-  await page.getByRole("link", { name: "市场" }).click();
+  await page.getByRole("link", { name: "市场", exact: true }).click();
   await expect(page.getByRole("heading", { name: "沪深主板市场概览" })).toHaveCount(0);
   await expect(page.getByText("目标日期前尚无 AKShare 真实历史数据。")).toBeVisible();
   await expect(page.getByText("综合情绪分数")).toHaveCount(0);
@@ -36,30 +36,15 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await expect(page.getByRole("heading", { name: "板块与概念强弱" })).toHaveCount(0);
 
   await page.getByRole("link", { name: "策略" }).click();
-  await expect(page.getByRole("heading", { name: "策略业绩复盘" })).toBeVisible();
-  await expect(page.getByText("演示策略数据")).toBeVisible();
-  await expect(page.getByText("基准 · 中证 500")).toBeVisible();
-  await expect(page.getByTestId("strategy-daily-return")).toBeVisible();
-  await expect(page.getByTestId("benchmark-daily-return")).toBeVisible();
-  await expect(page.getByTestId("excess-daily-return")).toBeVisible();
-  await expect(page.getByTestId("nav-chart")).toBeVisible();
-  await expect(page.getByTestId("drawdown-chart")).toBeVisible();
-  await expect(page.getByTestId("strategy-statistics")).toContainText("夏普比率");
-  const allRangeStatistics = await page.getByTestId("strategy-statistics").textContent();
-  await page.getByRole("button", { name: "近 3 月" }).click();
-  await expect(page.getByTestId("selected-range")).toHaveText("近 3 月");
-  await expect(page.getByTestId("strategy-statistics")).not.toHaveText(
-    allRangeStatistics ?? "",
-  );
-
-  await expect(page.getByRole("heading", { name: "持仓与交易复盘" })).toBeVisible();
-  await expect(page.getByText("演示组合数据")).toBeVisible();
-  await expect(page.getByTestId("holdings-table").locator("tbody tr")).toHaveCount(24);
-  await page.getByRole("button", { name: "当日交易" }).click();
-  await expect(page.getByTestId("trades-table").locator("tbody tr")).toHaveCount(6);
-  await page.getByRole("button", { name: "收益贡献" }).click();
-  await expect(page.getByTestId("contributions-table").locator("tbody tr")).toHaveCount(24);
-  await page.getByRole("button", { name: "按贡献排序" }).click();
+  await expect(
+    page.getByRole("heading", { name: "唯一核心交易策略" }),
+  ).toBeVisible();
+  await expect(page.getByText("账户未初始化")).toBeVisible();
+  await expect(page.getByLabel("初始资金（元）")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "初始化模拟账户" }),
+  ).toBeVisible();
+  await expect(page.getByText("演示策略数据")).toHaveCount(0);
 
   await page.getByRole("link", { name: "总览" }).click();
   await expect(page.getByTestId("review-save-status")).toHaveText("尚无笔记");
@@ -111,8 +96,14 @@ test("用户可以从仪表盘运行并查看目标日期的每日快照", async
   await expect(page.getByTestId("backfill-result")).toHaveText("补算完成：成功 3 日，失败 0 日。");
   await expect(page.getByTestId("backfill-day-results").locator(":scope > div")).toHaveCount(3);
   await page.getByRole("button", { name: "关闭设置" }).click();
+  await expect(page.getByRole("button", { name: "关闭设置" })).toHaveCount(0);
   await page.getByRole("link", { name: "总览" }).click();
+  await expect(page).toHaveURL(/\/overview\?/);
+  await expect(
+    page.getByRole("heading", { name: "收盘后的全局视图" }),
+  ).toBeVisible();
   await page.getByRole("textbox", { name: "目标日期" }).fill("2026-07-20");
+  await expect(page.getByTestId("actual-data-date")).toHaveText("2026-07-20");
   await expect(page.getByRole("textbox", { name: "复盘笔记" })).toHaveValue(
     "指数分化，关注主板成交持续性。",
   );

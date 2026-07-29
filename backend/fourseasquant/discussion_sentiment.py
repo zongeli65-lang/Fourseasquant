@@ -61,13 +61,6 @@ class PlatformDiscussionAggregate(BaseModel):
     likes_missing: bool
 
 
-class CombinedDiscussionSignal(BaseModel):
-    actual_date: date
-    code: str
-    heat_percentile: float
-    weighted_sentiment: float
-
-
 def classify_sentiment(text: str) -> Sentiment:
     has_positive = any(term in text for term in POSITIVE_TERMS)
     has_negative = any(term in text for term in NEGATIVE_TERMS)
@@ -139,35 +132,6 @@ def aggregate_platform_discussion(
         weighted_sentiment=sentiment_total / raw_heat,
         heat_percentile=_percentile(raw_heat, heat_universe),
         likes_missing=likes_missing,
-    )
-
-
-def combine_platform_aggregates(
-    eastmoney: PlatformDiscussionAggregate | None,
-    xueqiu: PlatformDiscussionAggregate | None,
-) -> CombinedDiscussionSignal | None:
-    if eastmoney is None or xueqiu is None:
-        return None
-    if eastmoney.platform != "eastmoney_guba" or xueqiu.platform != "xueqiu":
-        raise ValueError("综合舆情要求东方财富股吧和雪球各一份")
-    if (
-        eastmoney.code != xueqiu.code
-        or eastmoney.actual_date != xueqiu.actual_date
-    ):
-        raise ValueError("两个平台的股票代码和日期必须一致")
-    if eastmoney.heat_percentile is None or xueqiu.heat_percentile is None:
-        return None
-    return CombinedDiscussionSignal(
-        actual_date=eastmoney.actual_date,
-        code=eastmoney.code,
-        heat_percentile=(
-            eastmoney.heat_percentile + xueqiu.heat_percentile
-        )
-        / 2,
-        weighted_sentiment=(
-            eastmoney.weighted_sentiment + xueqiu.weighted_sentiment
-        )
-        / 2,
     )
 
 

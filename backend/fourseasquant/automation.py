@@ -27,7 +27,6 @@ from fourseasquant.database import (
     release_automation_date,
     renew_automation_date_claim,
     scheduled_attempt_count,
-    scheduled_attempt_exists,
     snapshot_exists,
 )
 from fourseasquant.settings import read_settings
@@ -261,9 +260,7 @@ def run_startup_catchup(
 ) -> AutomationOutcome:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
     selected_path = path or database_path()
-    # 启动补跑可能针对较早的策略快照；K 线数据集已按最新完整交易日
-    # 独立发布，不能为每个历史缺口重复抓取全市场一年数据。
-    use_real_candles = False
+    production_database = path is None
     if not database_is_ready(selected_path):
         initialize_database(selected_path)
     settings = read_settings(selected_path)
@@ -274,6 +271,7 @@ def run_startup_catchup(
     target_date = _latest_missing_trading_day(
         latest_due_date,
         selected_path,
+        require_latest_candles=production_database,
     )
     if target_date is None:
         return AutomationOutcome(
@@ -281,6 +279,9 @@ def run_startup_catchup(
             target_date=latest_due_date,
             reason=f"最近 {CATCHUP_LOOKBACK_DAYS} 日内没有缺失交易日",
         )
+    # 较早的缺口只补策略快照；最新应发布交易日必须同时补齐真实 K 线，
+    # 否则会出现“快照成功、行情仍旧”的伪完成状态。
+    use_real_candles = production_database and target_date == latest_due_date
     task = _execute_claimed_task(
         target_date=target_date,
         current=current,
@@ -317,21 +318,46 @@ def _latest_due_trading_day(current: datetime, scheduled_time: time) -> date:
     return candidate
 
 
-def _latest_missing_trading_day(latest_due_date: date, path: Path) -> date | None:
+def _latest_missing_trading_day(
+    latest_due_date: date,
+    path: Path,
+    *,
+    require_latest_candles: bool = False,
+) -> date | None:
     earliest = max(
         CALENDAR_SUPPORTED_START,
         latest_due_date - timedelta(days=CATCHUP_LOOKBACK_DAYS),
     )
     candidate = latest_due_date
     while candidate >= earliest:
-        if (
-            is_trading_day(candidate)
-            and not snapshot_exists(path, candidate)
-            and not scheduled_attempt_exists(path, candidate)
-        ):
-            return candidate
+        if is_trading_day(candidate):
+            snapshot_missing = not snapshot_exists(path, candidate)
+            latest_candles_missing = (
+                require_latest_candles
+                and candidate == latest_due_date
+                and latest_candle_publication(path, candidate) != candidate
+            )
+            if snapshot_missing or latest_candles_missing:
+                return candidate
         candidate -= timedelta(days=1)
     return None
+
+
+def resolve_manual_target_date(
+    requested_date: date,
+    *,
+    now: datetime | None = None,
+    path: Path | None = None,
+) -> date:
+    current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
+    if requested_date != current.date():
+        return requested_date
+    selected_path = path or database_path()
+    settings = read_settings(selected_path)
+    return _latest_due_trading_day(
+        current,
+        time.fromisoformat(settings.auto_update_time),
+    )
 
 
 def _execute_claimed_task(

@@ -9,7 +9,6 @@ from fourseasquant.database import initialize_database
 from fourseasquant.discussion_sentiment import (
     DiscussionPost,
     aggregate_platform_discussion,
-    combine_platform_aggregates,
 )
 from fourseasquant.fundamental_mechanical import (
     CapitalActionSignal,
@@ -19,9 +18,7 @@ from fourseasquant.fundamental_repository import (
     count_discussion_post_references,
     read_monthly_snapshot_coverage,
     read_latest_personal_fundamental_monthly_snapshot,
-    read_combined_discussion_signal,
     read_platform_discussion_aggregate,
-    save_combined_discussion_signal,
     save_discussion_day,
     save_personal_fundamental_monthly_snapshot,
     save_personal_fundamental_monthly_batch,
@@ -360,83 +357,3 @@ def test_discussion_storage_keeps_only_references_and_purges_after_thirty_days(
     )
 
     assert count_discussion_post_references(database) == 1
-
-
-def test_combined_discussion_signal_is_saved_only_from_both_platforms(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "combined-discussion.db"
-    initialize_database(database)
-    current_time = datetime(
-        2026,
-        7,
-        24,
-        10,
-        tzinfo=ZoneInfo("Asia/Shanghai"),
-    )
-    eastmoney_post = DiscussionPost(
-        platform="eastmoney_guba",
-        post_id="em-1",
-        code="600000",
-        url="https://example.test/em-1",
-        published_at=current_time,
-        likes=1,
-        text="利好",
-        content_type="user_original",
-    )
-    xueqiu_post = DiscussionPost(
-        platform="xueqiu",
-        post_id="xq-1",
-        code="600000",
-        url="https://example.test/xq-1",
-        published_at=current_time,
-        likes=1,
-        text="利空",
-        content_type="user_original",
-    )
-    eastmoney = aggregate_platform_discussion(
-        [eastmoney_post],
-        heat_universe=[1],
-    )
-    xueqiu = aggregate_platform_discussion(
-        [xueqiu_post],
-        heat_universe=[1],
-    )
-    save_discussion_day(
-        database,
-        posts=[eastmoney_post],
-        aggregate=eastmoney,
-        created_at=current_time,
-    )
-    save_discussion_day(
-        database,
-        posts=[xueqiu_post],
-        aggregate=xueqiu,
-        created_at=current_time,
-    )
-
-    stored_eastmoney = read_platform_discussion_aggregate(
-        database,
-        platform="eastmoney_guba",
-        actual_date=date(2026, 7, 24),
-        code="600000",
-    )
-    stored_xueqiu = read_platform_discussion_aggregate(
-        database,
-        platform="xueqiu",
-        actual_date=date(2026, 7, 24),
-        code="600000",
-    )
-    combined = combine_platform_aggregates(stored_eastmoney, stored_xueqiu)
-    assert combined is not None
-    save_combined_discussion_signal(
-        database,
-        combined,
-        created_at=current_time,
-    )
-
-    assert read_combined_discussion_signal(
-        database,
-        actual_date=date(2026, 7, 24),
-        code="600000",
-    ) == combined

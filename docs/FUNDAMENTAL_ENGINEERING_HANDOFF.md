@@ -10,12 +10,15 @@
 - 主营业务毛利润贡献识别；
 - 流通市值金额计算；全市场百分位等待完整横截面；
 - 内部人士、注销回购和稀释的真金白银信号分；
-- 东方财富股吧、雪球讨论的固定词典情绪、点赞对数加权和平台合并；
-- 双平台结果在两边数据齐全时自动合并并单独落库；
+- 独立“舆论监测”模块的 DeepSeek V4 Pro 五分类、点赞对数加权和平台独立汇总；
+- 策略板块每日最多发布 10 只有序舆论目标，新浪股吧只对这些目标自动采集；
+- 重点监测列表、三请求分片、后端整批低频轮转、任务心跳和进度可视化；
+- 舆论批次不再由浏览器逐只派发，刷新或关闭页面不会中断；
+- 无法稳定完成的受限来源采集窗口及接口已移除；
 - 只按帖子编号进行技术去重，不进行内容去重；
 - 财报网址与内容哈希复用；
 - 月度快照只保存变化字段；
-- 单帖引用不保存正文，并自动清理三十天以前的记录；
+- 舆论内容引用不保存正文，只保存网址、摘要哈希、模型分类、置信度和版本；
 - AKShare 新浪行业、概念板块及成分股的完整快照导入；
 - `140 + 40 + 20`、最多 200 只的可复现基本面候选池；
 - 巨潮高管交易、股本变化和回购注销证据的标准化、十二个月滚动聚合；
@@ -26,14 +29,23 @@
 - 每日资本行为、月末基本面快照联合定时任务及网站内独立重试；
 - 定时任务与网站重试按交易日跨进程互斥；
 - 资本行为状态、逐股证据 API（应用程序编程接口）和前端证据链；
-- 数据库版本升级到 16。
+- 舆论分类按内容哈希、模型和提示词版本复用；分类批次失败时不推进采集游标；
+- 舆论按用户指定窗口每股最多 300 条、每主题最多 50 条回复并优先最新内容；
+  达上限可发布但必须标记截断，DeepSeek 汇总不混入旧机械分类；
+- 热榜和重点监测不再生成自动任务；手动单股调查保持独立；
+- 数据库版本升级到 31。
 
 ## 2. 代码位置
 
 | 文件 | 职责 |
 |---|---|
 | `backend/fourseasquant/fundamental_mechanical.py` | 月度四支柱计算 |
-| `backend/fourseasquant/discussion_sentiment.py` | 每日讨论分类、热度和平台合并 |
+| `backend/fourseasquant/public_opinion.py` | 新舆论分类、点赞权重、完整性与最少样本门禁 |
+| `backend/fourseasquant/public_opinion_deepseek.py` | DeepSeek V4 Pro 批量五分类、响应校验与重试 |
+| `backend/fourseasquant/public_opinion_receivers.py` | 公开页面解析、限速、429/403 暂停和熔断 |
+| `backend/fourseasquant/public_opinion_repository.py` | 重点监测、任务、内容引用和平台日汇总 |
+| `backend/fourseasquant/public_opinion_worker.py` | 后端持久轮转、停止控制、进度状态和中断任务恢复 |
+| `backend/fourseasquant/public_opinion_api.py` | 舆论总览、自动新浪任务、重点监测、批次控制和单任务执行接口 |
 | `backend/fourseasquant/fundamental_discovery.py` | 东方财富、新浪板块与成分股标准化 |
 | `backend/fourseasquant/fundamental_repository.py` | 证据、变化快照、讨论引用和板块候选快照保存 |
 | `backend/fourseasquant/fundamental_capital_actions.py` | 资本行为事件标准化、时间截面过滤与十二个月聚合 |
@@ -98,8 +110,12 @@ uv run pytest -q \
 | `personal_fundamental_monthly_snapshots` | 个人基本面月度变化字段和来源网址 |
 | `personal_fundamental_monthly_batches` | 月度预期/完成股票、规则版本和原子发布状态 |
 | `discussion_daily_aggregates` | 平台每日汇总 |
-| `discussion_daily_combined_signals` | 东方财富股吧与雪球各占一半的综合结果 |
 | `discussion_post_references` | 最近三十天单帖引用，不含正文 |
+| `public_opinion_watchlist` | 用户明确加入或停止的重点监测股票 |
+| `public_opinion_collection_jobs` | 自动和手动采集任务、日期分段、游标与状态 |
+| `strategy_opinion_target_snapshots` | 策略发布的每日有序舆论调查代码，最多 10 只 |
+| `public_opinion_content_references` | 不含正文的舆论引用、分类和证据哈希 |
+| `public_opinion_daily_aggregates` | 各平台独立日汇总，不含跨平台总分 |
 | `fundamental_board_candidate_snapshots` | 完整板块候选及成分股快照 |
 | `capital_action_batches` | 每次资本采集的覆盖范围、成功/失败状态、时间和错误 |
 | `capital_action_events` | 规范化事件、原始结构化载荷、来源和内容哈希 |
@@ -109,10 +125,11 @@ uv run pytest -q \
 
 ## 5. 尚未实现
 
-- 东方财富股吧和雪球逐帖公开内容采集器；
+- 新浪股吧已作为自动舆论主源；东方财富只负责热榜发现；
+- 同花顺不再作为自动评论来源，除非未来出现可验证的免登录完整接口；
+- 受限来源不提供采集入口；未来只有取得正式授权接口后才重新评估；
 - 同花顺板块成分股采集器：当前项目 AKShare 1.18.70 只有同花顺板块目录和简介，没有完整成分股接口；
 - 东方财富与同花顺热门股票榜的统一候选池；
-- 每日舆情真实定时采集；
 - 由基本面研究模块提供的版本化行业/概念成员关系；该数据到位前不编造同行百分位。
 - 全部正常交易 A 股的历史流通市值横截面；接入前候选股流通市值百分位保持空值，不能用 200 只候选冒充全市场。
 
@@ -135,8 +152,11 @@ AKShare（A 股数据接口库）入口，但正式使用前仍应运行初始�
 
 ## 6. 安全和版权
 
-- 不读取或提交密钥、登录凭据和浏览器会话；
+- DeepSeek 密钥可由舆论页面保存到当前用户的 macOS 钥匙串，后端重启后
+  自动恢复；也可通过环境变量 `DEEPSEEK_API_KEY` 提供。接口不回传密钥，
+  且密钥不进入数据库、浏览器存储、日志、聊天或提交；
+- 不读取或提交登录凭据和浏览器会话；
 - 不绕过登录、验证码或反爬限制；
 - 不保存讨论正文和完整财报正文；
 - 不把第三方板块、热度或舆情写成基本面事实；
-- 不自动调用 Agent。
+- 舆论分类会调用固定的 DeepSeek API；基本面机械结果和其他模块不因此调用 Agent。

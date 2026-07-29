@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from fourseasquant.discussion_sentiment import (
     DiscussionPost,
     aggregate_platform_discussion,
-    combine_platform_aggregates,
 )
 
 
@@ -142,53 +141,6 @@ def test_conflicting_or_missing_terms_are_neutral() -> None:
     assert result.neutral_count == 2
     assert result.weighted_sentiment == 0
     assert result.likes_missing is True
-
-
-def test_eastmoney_and_xueqiu_are_combined_equally_only_when_both_exist() -> None:
-    published_at = datetime(
-        2026,
-        7,
-        24,
-        10,
-        tzinfo=ZoneInfo("Asia/Shanghai"),
-    )
-    eastmoney = aggregate_platform_discussion(
-        [
-            DiscussionPost(
-                platform="eastmoney_guba",
-                post_id="1",
-                code="600000",
-                url="https://example.test/em",
-                published_at=published_at,
-                likes=0,
-                text="利好",
-                content_type="user_original",
-            )
-        ],
-        heat_universe=[1, 2],
-    )
-    xueqiu = aggregate_platform_discussion(
-        [
-            DiscussionPost(
-                platform="xueqiu",
-                post_id="1",
-                code="600000",
-                url="https://example.test/xq",
-                published_at=published_at,
-                likes=0,
-                text="利空",
-                content_type="user_original",
-            )
-        ],
-        heat_universe=[1],
-    )
-
-    combined = combine_platform_aggregates(eastmoney, xueqiu)
-
-    assert combined is not None
-    assert combined.heat_percentile == pytest.approx(75)
-    assert combined.weighted_sentiment == pytest.approx(0)
-    assert combine_platform_aggregates(eastmoney, None) is None
 
 
 def test_official_or_reposted_content_cannot_enter_discussion_input() -> None:

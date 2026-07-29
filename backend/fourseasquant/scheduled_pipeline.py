@@ -3,13 +3,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date, datetime
 
 from fourseasquant.automation import (
+    BEIJING,
     MacOSNotifier,
     RecordingNotifier,
     run_scheduled_task,
     run_startup_catchup,
 )
+from fourseasquant.core_strategy_runtime import (
+    CoreStrategyAutomationOutcome,
+    advance_core_strategy_automation,
+    next_core_strategy_automation_date,
+)
+from fourseasquant.database import database_path
 from fourseasquant.fundamental_automation import (
     FundamentalAutomationOutcome,
     run_scheduled_fundamental_update,
@@ -50,17 +58,31 @@ def main() -> int:
             if market_allows_fundamental
             else None
         )
+        catchup_strategy = (
+            _advance_core_strategy(market.target_date)
+            if (
+                catchup_fundamental is not None
+                and catchup_fundamental.status != "failed"
+            )
+            else None
+        )
         should_notify = market.status in {"succeeded", "failed"} or (
             catchup_fundamental is not None
             and catchup_fundamental.status in {"succeeded", "failed"}
         ) or (
             catchup_lynch is not None
             and catchup_lynch.status in {"succeeded", "failed"}
+        ) or (
+            catchup_strategy is not None
+            and catchup_strategy.state == "failed"
         )
         if should_notify:
             try:
                 _notify_combined(
-                    market.status, catchup_fundamental, catchup_lynch
+                    market.status,
+                    catchup_fundamental,
+                    catchup_lynch,
+                    catchup_strategy,
                 )
             except Exception as error:
                 print(
@@ -81,6 +103,11 @@ def main() -> int:
                         if catchup_lynch is not None
                         else None
                     ),
+                    "core_strategy": (
+                        catchup_strategy.model_dump(mode="json")
+                        if catchup_strategy is not None
+                        else None
+                    ),
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -97,6 +124,10 @@ def main() -> int:
                 catchup_lynch is not None
                 and catchup_lynch.status == "failed"
             )
+            or (
+                catchup_strategy is not None
+                and catchup_strategy.state == "failed"
+            )
             else 0
         )
 
@@ -108,6 +139,7 @@ def main() -> int:
     )
     fundamental: FundamentalAutomationOutcome | None = None
     lynch: LynchAutomationOutcome | None = None
+    strategy: CoreStrategyAutomationOutcome | None = None
     market_allows_fundamental = market.status == "succeeded" or (
         market.status == "skipped" and market.reason == "该交易日已发布"
     )
@@ -117,21 +149,27 @@ def main() -> int:
             target_date=market.target_date,
             force=force,
         )
+        if fundamental.status != "failed":
+            strategy = _advance_core_strategy(market.target_date)
 
     failed = market.status == "failed" or (
         fundamental is not None and fundamental.status == "failed"
     ) or (
         lynch is not None and lynch.status == "failed"
+    ) or (
+        strategy is not None and strategy.state == "failed"
     )
     should_notify = market.status in {"succeeded", "failed"} or (
         fundamental is not None
         and fundamental.status in {"succeeded", "failed"}
     ) or (
         lynch is not None and lynch.status in {"succeeded", "failed"}
+    ) or (
+        strategy is not None and strategy.state == "failed"
     )
     if should_notify:
         try:
-            _notify_combined(market.status, fundamental, lynch)
+            _notify_combined(market.status, fundamental, lynch, strategy)
         except Exception as error:
             print(
                 f"联合任务通知失败：{type(error).__name__}: {error}",
@@ -151,6 +189,11 @@ def main() -> int:
                     if lynch is not None
                     else None
                 ),
+                "core_strategy": (
+                    strategy.model_dump(mode="json")
+                    if strategy is not None
+                    else None
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -163,6 +206,7 @@ def _notify_combined(
     market_status: str,
     fundamental: FundamentalAutomationOutcome | None,
     lynch: LynchAutomationOutcome | None = None,
+    strategy: CoreStrategyAutomationOutcome | None = None,
 ) -> None:
     notifier = MacOSNotifier()
     if market_status == "failed":
@@ -183,6 +227,12 @@ def _notify_combined(
             f"{lynch.target_date.isoformat()} · {lynch.reason}",
         )
         return
+    if strategy is not None and strategy.state == "failed":
+        notifier.send(
+            "Fourseasquant 核心策略更新失败",
+            f"{strategy.target_date.isoformat()} · {strategy.reason}",
+        )
+        return
     target_date = (
         fundamental.target_date.isoformat()
         if fundamental is not None
@@ -191,6 +241,24 @@ def _notify_combined(
     notifier.send(
         "Fourseasquant 更新成功",
         f"{target_date} 日频结果、资本行为与林奇数据完整发布。",
+    )
+
+
+def _advance_core_strategy(
+    latest_due_date: date,
+) -> CoreStrategyAutomationOutcome | None:
+    path = database_path()
+    target_date = next_core_strategy_automation_date(
+        path,
+        latest_due_date=latest_due_date,
+    )
+    if target_date is None:
+        return None
+    return advance_core_strategy_automation(
+        path,
+        target_date=target_date,
+        now=datetime.now(BEIJING),
+        force_prepare=True,
     )
 
 

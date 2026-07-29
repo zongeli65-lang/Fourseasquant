@@ -272,6 +272,78 @@ def test_startup_walks_back_to_the_latest_actual_gap(tmp_path: Path) -> None:
     assert len(task_runs(database)) == 2
 
 
+def test_startup_retries_latest_failed_trading_day_with_real_candles(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "failed-latest-catchup.db"
+    initialize_database(database)
+    failed_date = date(2026, 7, 27)
+    execute_daily_task(
+        failed_date,
+        path=database,
+        trigger_method="scheduled",
+        simulate_failure_stage="market_prepare",
+    )
+    candle_runs: list[date] = []
+
+    def run_with_candles(
+        run_date: date,
+        *,
+        path: Path,
+        trigger_method: TaskTrigger,
+    ) -> TaskRunResponse:
+        candle_runs.append(run_date)
+        return execute_daily_task(
+            run_date,
+            path=path,
+            trigger_method=trigger_method,
+        )
+
+    monkeypatch.setattr(automation_module, "database_path", lambda: database)
+    monkeypatch.setattr(
+        automation_module,
+        "execute_daily_task_with_candles",
+        run_with_candles,
+    )
+
+    outcome = run_startup_catchup(
+        now=datetime(2026, 7, 28, 9, 0, tzinfo=BEIJING),
+        notifier=RecordingNotifier(),
+    )
+
+    assert outcome.status == "succeeded"
+    assert outcome.target_date == failed_date
+    assert candle_runs == [failed_date]
+
+
+def test_manual_today_before_close_targets_previous_trading_day(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "manual-target.db"
+    initialize_database(database)
+
+    before_close = automation_module.resolve_manual_target_date(
+        date(2026, 7, 28),
+        now=datetime(2026, 7, 28, 15, 0, tzinfo=BEIJING),
+        path=database,
+    )
+    after_close = automation_module.resolve_manual_target_date(
+        date(2026, 7, 28),
+        now=datetime(2026, 7, 28, 16, 30, tzinfo=BEIJING),
+        path=database,
+    )
+    selected_history = automation_module.resolve_manual_target_date(
+        date(2026, 7, 24),
+        now=datetime(2026, 7, 28, 15, 0, tzinfo=BEIJING),
+        path=database,
+    )
+
+    assert before_close == date(2026, 7, 27)
+    assert after_close == date(2026, 7, 28)
+    assert selected_history == date(2026, 7, 24)
+
+
 def test_concurrent_automatic_triggers_publish_and_notify_only_once(
     tmp_path: Path,
 ) -> None:

@@ -8,8 +8,15 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
+from zoneinfo import ZoneInfo
 
+from fourseasquant.core_strategy_repository import create_core_strategy_tables
 from fourseasquant.fundamental_repository import create_fundamental_tables
+from fourseasquant.industry_chain.control import initialize_runtime_control
+from fourseasquant.industry_chain.schema import create_industry_chain_core_tables
+from fourseasquant.industry_chain.source_registry import seed_source_registry
+from fourseasquant.market_environment import create_market_environment_tables
+from fourseasquant.public_opinion_repository import create_public_opinion_tables
 
 
 @dataclass(frozen=True)
@@ -99,6 +106,7 @@ def database_path() -> Path:
 def initialize_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS app_metadata (
@@ -459,10 +467,25 @@ def initialize_database(path: Path) -> None:
             """
         )
         create_fundamental_tables(connection)
+        create_core_strategy_tables(connection)
+        create_public_opinion_tables(connection)
+        create_industry_chain_core_tables(connection)
+        create_market_environment_tables(connection)
+        industry_chain_initialized_at = datetime.now(
+            ZoneInfo("Asia/Shanghai")
+        )
+        seed_source_registry(
+            connection,
+            now=industry_chain_initialized_at,
+        )
+        initialize_runtime_control(
+            connection,
+            now=industry_chain_initialized_at,
+        )
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '17')
+            VALUES ('schema_version', '31')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -479,7 +502,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("17",)
+    return row == ("31",)
 
 
 def save_historical_market_summary(
@@ -997,6 +1020,36 @@ def latest_task_run(path: Path, target_date: date) -> TaskRunRow | None:
     )
 
 
+def latest_task_run_on_or_before(
+    path: Path,
+    target_date: date,
+) -> TaskRunRow | None:
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, trigger_method, target_date, started_at, finished_at,
+                   stage, status, error_summary
+            FROM task_runs
+            WHERE target_date <= ?
+            ORDER BY target_date DESC, id DESC
+            LIMIT 1
+            """,
+            (target_date.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return TaskRunRow(
+        id=cast(int, row[0]),
+        trigger_method=cast(str, row[1]),
+        target_date=date.fromisoformat(cast(str, row[2])),
+        started_at=datetime.fromisoformat(cast(str, row[3])),
+        finished_at=datetime.fromisoformat(cast(str, row[4])) if row[4] else None,
+        stage=cast(str, row[5]),
+        status=cast(str, row[6]),
+        error_summary=cast(str | None, row[7]),
+    )
+
+
 def claim_automation_date(
     path: Path,
     target_date: date,
@@ -1011,6 +1064,7 @@ def claim_automation_date(
             "SELECT claimed_at, claim_id FROM automation_claims WHERE target_date = ?",
             (target_date.isoformat(),),
         ).fetchone()
+        replaced_stale_claim = False
         if existing is not None:
             existing_claim = cast(str, existing[0])
             existing_claim_id = cast(str, existing[1])
@@ -1020,6 +1074,17 @@ def claim_automation_date(
                     "DELETE FROM automation_claims WHERE target_date = ? AND claim_id = ?",
                     (target_date.isoformat(), existing_claim_id),
                 )
+                replaced_stale_claim = True
+        if replaced_stale_claim:
+            connection.execute(
+                """
+                UPDATE task_runs
+                SET finished_at = ?, status = 'failed',
+                    error_summary = '任务进程中断，运行租约已过期'
+                WHERE target_date = ? AND status = 'running'
+                """,
+                (claimed_at.isoformat(), target_date.isoformat()),
+            )
         cursor = connection.execute(
             "INSERT OR IGNORE INTO automation_claims (target_date, claimed_at, claim_id) VALUES (?, ?, ?)",
             (target_date.isoformat(), claimed_at.isoformat(), claim_id),

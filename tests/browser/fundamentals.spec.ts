@@ -96,19 +96,11 @@ const xueqiuDiscussion = {
   heat_percentile: 74,
 };
 
-const combinedDiscussion = {
-  actual_date: "2026-07-24",
-  code: "600000",
-  heat_percentile: 78.25,
-  weighted_sentiment: 0.365,
-};
-
 const completeDay = {
   actual_date: "2026-07-24",
   code: "600000",
   eastmoney_guba: eastmoneyDiscussion,
   xueqiu: xueqiuDiscussion,
-  combined: combinedDiscussion,
   eastmoney_reference_count: 12,
   xueqiu_reference_count: 8,
 };
@@ -118,7 +110,6 @@ const partialDay = {
   code: "000001",
   eastmoney_guba: { ...eastmoneyDiscussion, code: "000001" },
   xueqiu: null,
-  combined: null,
   eastmoney_reference_count: 12,
   xueqiu_reference_count: 0,
 };
@@ -350,9 +341,9 @@ test("用户可以筛选候选板块并查看林奇核心底座与增强信息",
   await page.locator(".fundamental-enhancement > summary").click();
   await expect(page.getByRole("heading", { name: "主营业务" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "流通市值" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "讨论热度与情绪" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "舆论监测" })).toBeVisible();
   await expect(page.getByText("良好", { exact: true })).toBeVisible();
-  await expect(page.getByText("双平台综合情绪 · 最近 1 日")).toBeVisible();
+  await expect(page.getByRole("link", { name: "打开舆论监测" })).toBeVisible();
   await expect(page.getByText("基本面总分", { exact: true })).toHaveCount(0);
   await expect(page.getByText("机构持股比例", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "查看巨潮资讯证据" })).toHaveAttribute(
@@ -378,8 +369,9 @@ test("用户可以筛选候选板块并查看林奇核心底座与增强信息",
     page.locator(".fundamental-evidence-grid article").filter({ hasText: "存货与收入" }),
   ).toContainText("数据不足");
   await expect(page.getByText("无法确定", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("等待另一平台数据")).toBeVisible();
-  await expect(
-    page.locator(".discussion-platform--empty").filter({ hasText: "雪球" }),
-  ).toContainText("暂无数据");
+  await expect(page.getByRole("link", { name: "打开舆论监测" })).toHaveAttribute(
+    "href",
+    "/public-opinion",
+  );
+  await expect(page.getByText("雪球")).toHaveCount(0);
 });

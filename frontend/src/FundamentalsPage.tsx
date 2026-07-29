@@ -147,19 +147,11 @@ type PlatformDiscussion = {
   likes_missing: boolean;
 };
 
-type CombinedDiscussion = {
-  actual_date: string;
-  code: string;
-  heat_percentile: number;
-  weighted_sentiment: number;
-};
-
 type DiscussionDay = {
   actual_date: string;
   code: string;
   eastmoney_guba: PlatformDiscussion | null;
   xueqiu: PlatformDiscussion | null;
-  combined: CombinedDiscussion | null;
   eastmoney_reference_count: number;
   xueqiu_reference_count: number;
 };
@@ -365,13 +357,6 @@ function beijingDateTime(value: string | null): string {
   });
 }
 
-function sentimentLabel(value: number | null): string {
-  if (value === null) return "等待另一平台数据";
-  if (value > 0.05) return `偏多 ${value.toFixed(3)}`;
-  if (value < -0.05) return `偏空 ${value.toFixed(3)}`;
-  return `中性 ${value.toFixed(3)}`;
-}
-
 function inventoryLabel(snapshot: MonthlySnapshot): string {
   if (snapshot.inventory_status === "not_applicable") return "不适用";
   if (snapshot.inventory_status === "insufficient_data") return "数据不足";
@@ -413,99 +398,6 @@ function PillarHeader({
         <p>{description}</p>
       </div>
     </header>
-  );
-}
-
-function DiscussionPlatformCard({
-  title,
-  data,
-  referenceCount,
-}: {
-  title: string;
-  data: PlatformDiscussion | null;
-  referenceCount: number;
-}) {
-  if (!data) {
-    return (
-      <article className="discussion-platform discussion-platform--empty">
-        <h4>{title}</h4>
-        <strong>暂无数据</strong>
-        <p>该日期尚未生成此平台的机械舆情汇总。</p>
-      </article>
-    );
-  }
-  return (
-    <article className="discussion-platform">
-      <header>
-        <h4>{title}</h4>
-        <span>{data.actual_date}</span>
-      </header>
-      <dl>
-        <div>
-          <dt>原创帖子</dt>
-          <dd>{data.post_count}</dd>
-        </div>
-        <div>
-          <dt>点赞加权热度</dt>
-          <dd>{decimal(data.raw_heat)}</dd>
-        </div>
-        <div>
-          <dt>平台热度百分位</dt>
-          <dd>{percentile(data.heat_percentile)}</dd>
-        </div>
-        <div>
-          <dt>机械情绪</dt>
-          <dd>{sentimentLabel(data.weighted_sentiment)}</dd>
-        </div>
-        <div>
-          <dt>多 / 中 / 空</dt>
-          <dd>
-            {data.positive_count} / {data.neutral_count} / {data.negative_count}
-          </dd>
-        </div>
-        <div>
-          <dt>帖子引用</dt>
-          <dd>{referenceCount}</dd>
-        </div>
-      </dl>
-      {data.likes_missing && <p className="fundamental-note">部分帖子缺少点赞数，机械权重按 1 计算。</p>}
-    </article>
-  );
-}
-
-function DiscussionTrend({ days }: { days: DiscussionDay[] }) {
-  const visible = [...days].reverse();
-  if (visible.length === 0) {
-    return <p className="fundamental-inline-empty">最近 30 天尚无舆情数据。</p>;
-  }
-  return (
-    <div className="discussion-trend">
-      <div
-        className="discussion-trend__plot"
-        role="img"
-        aria-label="最近三十天双平台综合情绪趋势，柱高表示情绪绝对值"
-      >
-        {visible.map((day) => {
-          const value = day.combined?.weighted_sentiment ?? null;
-          const height = value === null ? 4 : Math.max(8, Math.abs(value) * 62);
-          const tone =
-            value === null ? "missing" : value > 0.05 ? "positive" : value < -0.05 ? "negative" : "neutral";
-          return (
-            <span
-              key={day.actual_date}
-              className={`discussion-trend__bar discussion-trend__bar--${tone}`}
-              style={{ height }}
-              title={`${day.actual_date} · ${sentimentLabel(value)}`}
-            />
-          );
-        })}
-      </div>
-      <div className="discussion-trend__legend">
-        <span>较早</span>
-        <span>双平台综合情绪 · 最近 {visible.length} 日</span>
-        <span>最近</span>
-      </div>
-    </div>
   );
 }
 
@@ -579,8 +471,6 @@ function FundamentalDetail({
   const discussion = item.discussion;
   const monthlyHistory =
     monthlyState.kind === "ready" ? monthlyState.data.records : [];
-  const discussionDays =
-    discussionState.kind === "ready" ? discussionState.data.days : [];
 
   return (
     <section className="fundamental-detail" aria-labelledby="fundamental-detail-title">
@@ -676,20 +566,6 @@ function FundamentalDetail({
           <p>
             该股票已有全量林奇记录，但真实月度财务采集和计算可能尚未完成。空值不会被当作 0。
           </p>
-          {discussion && (
-            <div className="fundamental-discussion-only">
-              <DiscussionPlatformCard
-                title="东方财富股吧"
-                data={discussion.eastmoney_guba}
-                referenceCount={discussion.eastmoney_reference_count}
-              />
-              <DiscussionPlatformCard
-                title="雪球"
-                data={discussion.xueqiu}
-                referenceCount={discussion.xueqiu_reference_count}
-              />
-            </div>
-          )}
         </section>
       ) : (
         <details className="fundamental-enhancement">
@@ -844,39 +720,15 @@ function FundamentalDetail({
           <section className="fundamental-pillar">
             <PillarHeader
               number="IV"
-              title="讨论热度与情绪"
-              description="只统计原创用户讨论；公告、新闻、研报和转载不进入机械舆情。"
+              title="舆论监测"
+              description="舆论已拆为独立模块：东方财富负责热榜发现，新浪股吧负责低频采集主题、回复和点赞。"
             />
-            <div className="discussion-summary">
-              <Metric
-                label="双平台综合热度"
-                value={percentile(discussion?.combined?.heat_percentile ?? null)}
-              />
-              <Metric
-                label="双平台综合情绪"
-                value={sentimentLabel(discussion?.combined?.weighted_sentiment ?? null)}
-                detail={discussion?.combined ? "东方财富与雪球各占 50%" : "任一平台缺失时不生成综合值"}
-              />
-            </div>
-            <div className="discussion-platform-grid">
-              <DiscussionPlatformCard
-                title="东方财富股吧"
-                data={discussion?.eastmoney_guba ?? null}
-                referenceCount={discussion?.eastmoney_reference_count ?? 0}
-              />
-              <DiscussionPlatformCard
-                title="雪球"
-                data={discussion?.xueqiu ?? null}
-                referenceCount={discussion?.xueqiu_reference_count ?? 0}
-              />
-            </div>
-            {discussionState.kind === "loading" ? (
-              <p className="fundamental-inline-empty">正在读取最近 30 天舆情趋势…</p>
-            ) : discussionState.kind === "error" ? (
-              <p className="fundamental-inline-error">{discussionState.message}</p>
-            ) : (
-              <DiscussionTrend days={discussionDays} />
-            )}
+            <p className="fundamental-note">
+              旧的跨平台综合值已经移除。新模块按平台展示采集完整性、有效样本和方向，不回写基本面排序。
+            </p>
+            <a className="fundamental-source-link" href="/public-opinion">
+              打开舆论监测
+            </a>
           </section>
 
           <section className="fundamental-history">

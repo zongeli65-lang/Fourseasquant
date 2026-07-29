@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Literal, cast
 
 from fourseasquant.discussion_sentiment import (
-    CombinedDiscussionSignal,
     DiscussionPlatform,
     DiscussionPost,
     PlatformDiscussionAggregate,
@@ -163,28 +162,11 @@ def create_fundamental_tables(connection: sqlite3.Connection) -> None:
     )
     connection.execute(
         """
-        CREATE TABLE IF NOT EXISTS discussion_daily_combined_signals (
-            actual_date TEXT NOT NULL,
-            code TEXT NOT NULL,
-            heat_percentile REAL NOT NULL,
-            weighted_sentiment REAL NOT NULL,
-            created_at TEXT NOT NULL,
-            PRIMARY KEY (actual_date, code)
-        )
-        """
-    )
-    connection.execute(
-        """
         CREATE INDEX IF NOT EXISTS idx_discussion_daily_code_date
         ON discussion_daily_aggregates (code, actual_date DESC)
         """
     )
-    connection.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_discussion_combined_code_date
-        ON discussion_daily_combined_signals (code, actual_date DESC)
-        """
-    )
+    connection.execute("DROP TABLE IF EXISTS discussion_daily_combined_signals")
     connection.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_discussion_post_reference_date
@@ -1019,62 +1001,6 @@ def read_platform_discussion_aggregate(
         weighted_sentiment=cast(float, row[5]),
         heat_percentile=cast(float | None, row[6]),
         likes_missing=bool(row[7]),
-    )
-
-
-def save_combined_discussion_signal(
-    path: Path,
-    signal: CombinedDiscussionSignal,
-    *,
-    created_at: datetime,
-) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
-            INSERT INTO discussion_daily_combined_signals (
-                actual_date,
-                code,
-                heat_percentile,
-                weighted_sentiment,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(actual_date, code) DO UPDATE SET
-                heat_percentile = excluded.heat_percentile,
-                weighted_sentiment = excluded.weighted_sentiment,
-                created_at = excluded.created_at
-            """,
-            (
-                signal.actual_date.isoformat(),
-                signal.code,
-                signal.heat_percentile,
-                signal.weighted_sentiment,
-                created_at.isoformat(),
-            ),
-        )
-
-
-def read_combined_discussion_signal(
-    path: Path,
-    *,
-    actual_date: date,
-    code: str,
-) -> CombinedDiscussionSignal | None:
-    with sqlite3.connect(path) as connection:
-        row = connection.execute(
-            """
-            SELECT heat_percentile, weighted_sentiment
-            FROM discussion_daily_combined_signals
-            WHERE actual_date = ? AND code = ?
-            """,
-            (actual_date.isoformat(), code),
-        ).fetchone()
-    if row is None:
-        return None
-    return CombinedDiscussionSignal(
-        actual_date=actual_date,
-        code=code,
-        heat_percentile=cast(float, row[0]),
-        weighted_sentiment=cast(float, row[1]),
     )
 
 

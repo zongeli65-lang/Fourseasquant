@@ -10,7 +10,11 @@ import pytest
 from pydantic import ValidationError
 from pytest import MonkeyPatch
 
-from fourseasquant.daily_snapshots import PreparedMarket, execute_daily_task
+from fourseasquant.daily_snapshots import (
+    PreparedMarket,
+    execute_daily_task,
+    read_dashboard,
+)
 from fourseasquant.database import initialize_database, latest_snapshot, latest_task_run
 from fourseasquant.settings import SettingsUpdate, save_settings
 
@@ -92,6 +96,7 @@ def test_real_strategy_exception_is_recorded_in_strategy_stage(tmp_path: Path) -
     assert task is not None
     assert task.status == "failed"
     assert task.stage == "strategy_run"
+    assert task.error_summary == "ValueError: 策略实现异常"
 
 
 def test_logging_failure_never_changes_success_or_recorded_failure(
@@ -119,3 +124,24 @@ def test_logging_failure_never_changes_success_or_recorded_failure(
     failed_task = latest_task_run(database, date(2026, 7, 21))
     assert failed_task is not None
     assert failed_task.status == "failed"
+
+
+def test_today_view_surfaces_newer_failed_trading_day(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "today-fallback.db"
+    initialize_database(database)
+    execute_daily_task(date(2026, 7, 24), path=database)
+    execute_daily_task(
+        date(2026, 7, 27),
+        path=database,
+        trigger_method="scheduled",
+        simulate_failure_stage="market_prepare",
+    )
+
+    dashboard = read_dashboard(date(2026, 7, 28), path=database)
+
+    assert dashboard.actual_data_date == date(2026, 7, 24)
+    assert dashboard.task_status == "failed"
+    assert dashboard.failure is not None
+    assert dashboard.failure.stage == "market_prepare"

@@ -470,6 +470,7 @@ def build_akshare_one_year_history_importer(
     max_workers: int = 2,
     progress_callback: ProgressCallback | None = None,
     include_technical_boards: bool = False,
+    version_tag: str | None = None,
 ) -> AkshareOneYearHistoryImporter:
     import akshare as ak  # type: ignore[import-untyped]
 
@@ -482,6 +483,12 @@ def build_akshare_one_year_history_importer(
         stock_history=lambda symbol, start, end: _akshare_stock_history(
             ak, symbol, start, end, adjust=""
         ),
+        history_source=(
+            f"{HISTORY_SOURCE}:{version_tag}"
+            if version_tag
+            else HISTORY_SOURCE
+        ),
+        publish_market_days=version_tag is None,
         max_workers=max_workers,
         progress_callback=progress_callback,
     )

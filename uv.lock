@@ -287,13 +287,13 @@ source = { virtual = "." }
 dependencies = [
     { name = "akshare" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pypdf" },
     { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pytest" },
@@ -303,13 +303,13 @@ dev = [
 requires-dist = [
     { name = "akshare", specifier = ">=1.18.70,<2" },
     { name = "fastapi", specifier = ">=0.116,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pypdf", specifier = ">=5,<7" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mypy", specifier = ">=1.17,<2" },
     { name = "pandas-stubs", specifier = ">=2.3,<3" },
     { name = "pytest", specifier = ">=8.4,<10" },
