@@ -27,6 +27,7 @@ from fourseasquant.fundamental_repository import (
     save_fundamental_update_attempt,
 )
 from fourseasquant.settings import read_settings
+from fourseasquant.sqlite_connection import open_database_connection
 from fourseasquant.trading_calendar import is_trading_day
 
 
@@ -366,7 +367,7 @@ def _record_command_failure_if_needed(
 
 
 def _failed_attempt_count(path: Path, target_date: date) -> int:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         capital_row = connection.execute(
             """
             SELECT COUNT(*)

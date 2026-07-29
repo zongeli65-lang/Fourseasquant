@@ -12,6 +12,7 @@ from fourseasquant.fundamental_lynch import (
     LynchDailyResult,
     LynchFinancialBase,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 @dataclass(frozen=True)
@@ -179,7 +180,7 @@ def save_lynch_financial_base_batch(
     status: Literal["published", "failed"] = (
         "published" if complete else "failed"
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         with connection:
             cursor = connection.execute(
@@ -264,7 +265,7 @@ def save_lynch_daily_batch(
     status: Literal["published", "failed"] = (
         "published" if complete else "failed"
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         with connection:
             cursor = connection.execute(
@@ -340,7 +341,7 @@ def read_latest_published_lynch_financial_batch(
     *,
     rules_version: str = LYNCH_RULES_VERSION,
 ) -> PublishedLynchFinancialBatch | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT batch.id, batch.target_date, batch.rules_version,
@@ -387,7 +388,7 @@ def read_latest_published_lynch_daily_batch(
     *,
     rules_version: str = LYNCH_RULES_VERSION,
 ) -> PublishedLynchDailyBatch | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT batch.id, batch.target_date, batch.financial_base_date,
@@ -438,7 +439,7 @@ def save_lynch_financial_collection_item(
     collected_at: datetime,
     rules_version: str = LYNCH_RULES_VERSION,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.execute(
                 """
@@ -466,7 +467,7 @@ def read_lynch_financial_collection_cache(
     target_date: date,
     rules_version: str = LYNCH_RULES_VERSION,
 ) -> dict[str, LynchFinancialBase]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code, payload_json

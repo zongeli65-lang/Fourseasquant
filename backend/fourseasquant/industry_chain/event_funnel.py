@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from fourseasquant.sqlite_connection import open_database_connection
+
 from .announcement_triage import TriageDecision
 from .control import enqueue_source_event_hunt
 from .discovery import DiscoveryItem, read_discovery_items
@@ -55,7 +57,7 @@ def cluster_and_queue_actionable_events(
     items = read_discovery_items(path, tuple(decision_by_id))
     assignments: dict[str, list[TriageDecision]] = {}
     cutoff = now - NEWS_FRESHNESS
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         with connection:
             for item in items:
@@ -113,7 +115,7 @@ def read_fresh_event_cluster_count(
     as_of_time: datetime,
 ) -> int:
     cutoff = as_of_time - NEWS_FRESHNESS
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT COUNT(*)
@@ -224,7 +226,7 @@ def _assign_cluster(
 
 
 def _cluster_discovery_ids(path: Path, cluster_id: str) -> tuple[str, ...]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT link.discovery_id
@@ -245,7 +247,7 @@ def _already_requested(
     cluster_id: str,
     evidence_count: int,
 ) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT 1

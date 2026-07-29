@@ -28,6 +28,7 @@ from fourseasquant.fundamental_mechanical import (
     RULES_VERSION,
 )
 from fourseasquant.fundamental_lynch_repository import create_lynch_tables
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 @dataclass(frozen=True)
@@ -295,7 +296,7 @@ def claim_fundamental_update(
 ) -> str | None:
     stale_before = claimed_at.timestamp() - stale_after_seconds
     claim_id = str(uuid.uuid4())
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         existing = connection.execute(
             """
             SELECT claimed_at, claim_id
@@ -330,7 +331,7 @@ def release_fundamental_update(
     target_date: date,
     claim_id: str,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             DELETE FROM fundamental_update_claims
@@ -346,7 +347,7 @@ def renew_fundamental_update(
     claim_id: str,
     renewed_at: datetime,
 ) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             UPDATE fundamental_update_claims
@@ -376,7 +377,7 @@ def save_parsed_evidence(
         sort_keys=True,
         separators=(",", ":"),
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             INSERT OR IGNORE INTO fundamental_parsed_evidence (
@@ -406,7 +407,7 @@ def save_capital_action_snapshot(
         "published" if snapshot.complete else "failed"
     )
     published_at = collected_at if snapshot.complete else None
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         with connection:
             cursor = connection.execute(
@@ -514,7 +515,7 @@ def read_latest_published_capital_action_snapshot(
     if as_of_date is not None:
         date_clause = "WHERE publication.as_of_date <= ?"
         parameters = (as_of_date.isoformat(),)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             f"""
             SELECT
@@ -570,7 +571,7 @@ def read_latest_capital_action_batch(
     if as_of_date is not None:
         date_clause = "WHERE as_of_date <= ?"
         parameters = (as_of_date.isoformat(),)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             f"""
             SELECT
@@ -626,7 +627,7 @@ def save_fundamental_update_attempt(
     path: Path,
     attempt: FundamentalUpdateAttempt,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO fundamental_update_attempts (
@@ -652,7 +653,7 @@ def read_latest_fundamental_update_attempt(
     *,
     target_date: date,
 ) -> FundamentalUpdateAttempt | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT target_date, stage, status, attempted_at, error_summary
@@ -683,7 +684,7 @@ def read_monthly_snapshot_coverage(
 ) -> set[str]:
     if not codes:
         return set()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT completed_codes_json
@@ -746,7 +747,7 @@ def save_personal_fundamental_monthly_batch(
     for snapshot, source_urls in snapshots:
         result = _prepare_personal_fundamental_monthly_save(path, snapshot)
         prepared.append((snapshot, source_urls, result))
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             for snapshot, source_urls, result in prepared:
                 if not result.stored:
@@ -875,7 +876,7 @@ def save_discussion_day(
     created_at: datetime,
 ) -> None:
     cutoff = aggregate.actual_date - timedelta(days=30)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.execute(
                 """
@@ -960,7 +961,7 @@ def save_discussion_day(
 
 
 def count_discussion_post_references(path: Path) -> int:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[int],
             connection.execute(
@@ -977,7 +978,7 @@ def read_platform_discussion_aggregate(
     actual_date: date,
     code: str,
 ) -> PlatformDiscussionAggregate | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT post_count, positive_count, neutral_count, negative_count,
@@ -1014,7 +1015,7 @@ def save_board_candidate_snapshot(
         raise ValueError("板块候选快照不完整，禁止写入正式候选库")
     payload_json = snapshot.model_dump_json()
     content_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             INSERT OR IGNORE INTO fundamental_board_candidate_snapshots (
@@ -1052,7 +1053,7 @@ def read_latest_board_candidate_snapshot(
         if effective_on_or_before is not None
         else (source,)
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             f"""
             SELECT payload_json
@@ -1092,7 +1093,7 @@ def _read_latest_personal_fundamental_monthly_snapshot_before(
         if before_date is not None
         else (code, rules_version)
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             f"""
             SELECT as_of_date, changed_fields_json

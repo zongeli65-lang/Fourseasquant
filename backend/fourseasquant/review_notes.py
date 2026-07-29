@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, cast
@@ -9,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, RootModel, StringConstraints, model_validator
 
+from fourseasquant.sqlite_connection import open_database_connection
 
 NormalizedTagText = Annotated[
     str,
@@ -47,7 +47,7 @@ class ReviewResponse(BaseModel):
 
 
 def read_review(path: Path, review_date: date) -> ReviewResponse:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[str, str, str] | None,
             connection.execute(
@@ -82,7 +82,7 @@ def save_review(
 ) -> ReviewResponse:
     updated_at = datetime.now(ZoneInfo("Asia/Shanghai"))
     tag_values = request.tag_values()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO daily_reviews (review_date, note, tags_json, updated_at)

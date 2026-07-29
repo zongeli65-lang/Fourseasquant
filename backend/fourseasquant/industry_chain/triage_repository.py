@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+from fourseasquant.sqlite_connection import open_database_connection
 
 from .announcement_triage import AnnouncementTriageResult, TriageDecision
 from .discovery import DiscoveryItem, read_discovery_items
@@ -29,7 +30,7 @@ def read_unclustered_actionable_decisions(
     if not 1 <= limit <= 100:
         raise ValueError("事件回填上限必须在 1 到 100 之间")
     cutoff = as_of_time - NEWS_FRESHNESS
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT decision.value
@@ -107,7 +108,7 @@ def read_untriaged_discovery_ids(
     if not 1 <= limit <= 100:
         raise ValueError("未初筛发现读取上限必须在 1 到 100 之间")
     cutoff = as_of_time - NEWS_FRESHNESS
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT discovery.discovery_id
@@ -211,7 +212,7 @@ def save_announcement_triage(
         separators=(",", ":"),
     )
     timestamp = completed_at.isoformat()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             INSERT OR IGNORE INTO industry_chain_triage_runs (

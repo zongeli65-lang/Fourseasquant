@@ -17,6 +17,7 @@ from fourseasquant.industry_chain.schema import create_industry_chain_core_table
 from fourseasquant.industry_chain.source_registry import seed_source_registry
 from fourseasquant.market_environment import create_market_environment_tables
 from fourseasquant.public_opinion_repository import create_public_opinion_tables
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ def database_path() -> Path:
 
 def initialize_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             """
@@ -493,7 +494,7 @@ def initialize_database(path: Path) -> None:
 
 def database_is_ready(path: Path) -> bool:
     try:
-        with sqlite3.connect(path) as connection:
+        with open_database_connection(path) as connection:
             row = cast(
                 tuple[str] | None,
                 connection.execute(
@@ -511,7 +512,7 @@ def save_historical_market_summary(
     source: str,
     summary: HistoricalMarketSummaryRow,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO historical_market_daily_summary (
@@ -551,7 +552,7 @@ def save_historical_benchmark_fact(
     source: str,
     fact: HistoricalBenchmarkFactRow,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO historical_benchmark_facts (
@@ -595,7 +596,7 @@ def save_history_symbol_batch(
     facts: list[HistoricalSecurityFactRow],
     completed_at: datetime,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.executemany(
                 """
@@ -677,7 +678,7 @@ def completed_history_symbols(
     range_start: date,
     range_end: date,
 ) -> set[str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code
@@ -695,7 +696,7 @@ def historical_security_facts_for_date(
     source: str,
     actual_data_date: date,
 ) -> list[HistoricalSecurityFactRow]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT actual_data_date, code, name, open, high, low, close,
@@ -735,7 +736,7 @@ def save_market_facts(
     collected_at: datetime,
 ) -> int:
     content_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             INSERT OR IGNORE INTO market_fact_snapshots (
@@ -773,7 +774,7 @@ def save_market_facts(
 def latest_market_facts(
     path: Path, actual_data_date: date
 ) -> MarketFactsRow | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[int, str, str, str, str] | None,
             connection.execute(
@@ -799,7 +800,7 @@ def latest_market_facts(
 
 
 def latest_snapshot(path: Path, target_date: date) -> SnapshotRow | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[str, str, str] | None,
             connection.execute(
@@ -824,7 +825,7 @@ def latest_snapshot(path: Path, target_date: date) -> SnapshotRow | None:
 
 
 def latest_task_status(path: Path, target_date: date) -> str:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[str] | None,
             connection.execute(
@@ -842,7 +843,7 @@ def latest_task_status(path: Path, target_date: date) -> str:
 
 
 def snapshot_exists(path: Path, target_date: date) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             "SELECT 1 FROM daily_snapshots WHERE target_date = ?",
             (target_date.isoformat(),),
@@ -857,7 +858,7 @@ def create_task_run(
     *,
     trigger_method: str = "manual",
 ) -> int:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             INSERT INTO task_runs (
@@ -884,7 +885,7 @@ def publish_snapshot(
     simulate_failure: bool = False,
     technical_publication: TechnicalScorePublicationRow | None = None,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.execute(
                 """
@@ -938,7 +939,7 @@ def publish_snapshot(
 
 
 def update_task_stage(path: Path, task_id: int, stage: str) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             "UPDATE task_runs SET stage = ? WHERE id = ?",
             (stage, task_id),
@@ -953,7 +954,7 @@ def fail_task_run(
     stage: str,
     error_summary: str,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             UPDATE task_runs
@@ -965,7 +966,7 @@ def fail_task_run(
 
 
 def task_runs(path: Path, *, limit: int = 20) -> list[TaskRunRow]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT id, trigger_method, target_date, started_at, finished_at,
@@ -994,7 +995,7 @@ def task_runs(path: Path, *, limit: int = 20) -> list[TaskRunRow]:
 
 
 def latest_task_run(path: Path, target_date: date) -> TaskRunRow | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT id, trigger_method, target_date, started_at, finished_at,
@@ -1024,7 +1025,7 @@ def latest_task_run_on_or_before(
     path: Path,
     target_date: date,
 ) -> TaskRunRow | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT id, trigger_method, target_date, started_at, finished_at,
@@ -1059,7 +1060,7 @@ def claim_automation_date(
 ) -> str | None:
     stale_before = claimed_at.timestamp() - stale_after_seconds
     claim_id = str(uuid.uuid4())
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         existing = connection.execute(
             "SELECT claimed_at, claim_id FROM automation_claims WHERE target_date = ?",
             (target_date.isoformat(),),
@@ -1093,7 +1094,7 @@ def claim_automation_date(
 
 
 def release_automation_date(path: Path, target_date: date, claim_id: str) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             "DELETE FROM automation_claims WHERE target_date = ? AND claim_id = ?",
             (target_date.isoformat(), claim_id),
@@ -1106,7 +1107,7 @@ def renew_automation_date_claim(
     claim_id: str,
     renewed_at: datetime,
 ) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             UPDATE automation_claims
@@ -1125,7 +1126,7 @@ def active_automation_claim_exists(
     *,
     stale_after_seconds: int = 7_200,
 ) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             "SELECT claimed_at FROM automation_claims WHERE target_date = ?",
             (target_date.isoformat(),),
@@ -1137,7 +1138,7 @@ def active_automation_claim_exists(
 
 
 def scheduled_attempt_exists(path: Path, target_date: date) -> bool:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT 1 FROM task_runs
@@ -1150,7 +1151,7 @@ def scheduled_attempt_exists(path: Path, target_date: date) -> bool:
 
 
 def scheduled_attempt_count(path: Path, target_date: date) -> int:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[int],
             connection.execute(

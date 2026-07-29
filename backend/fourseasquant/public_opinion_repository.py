@@ -23,6 +23,7 @@ from fourseasquant.public_opinion import (
     classify_public_opinion,
 )
 from fourseasquant.public_opinion_deepseek import PROMPT_VERSION
+from fourseasquant.sqlite_connection import open_database_connection
 from fourseasquant.trading_calendar import is_trading_day
 
 
@@ -304,7 +305,7 @@ def add_to_opinion_watchlist(
     now: datetime,
 ) -> OpinionWatchlistEntry:
     _validate_code(code)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO public_opinion_watchlist (
@@ -327,7 +328,7 @@ def remove_from_opinion_watchlist(
     now: datetime,
 ) -> OpinionWatchlistEntry:
     _validate_code(code)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             UPDATE public_opinion_watchlist
@@ -342,7 +343,7 @@ def remove_from_opinion_watchlist(
 
 
 def list_opinion_watchlist(path: Path) -> list[OpinionWatchlistEntry]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code, name, active, created_at, updated_at
@@ -383,7 +384,7 @@ def publish_strategy_opinion_targets(
         _validate_code(code)
     codes_json = json.dumps(codes, ensure_ascii=False, separators=(",", ":"))
     content_sha256 = hashlib.sha256(codes_json.encode("utf-8")).hexdigest()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         existing = connection.execute(
             """
             SELECT codes_json, content_sha256, published_at
@@ -432,7 +433,7 @@ def read_strategy_opinion_targets(
     *,
     actual_date: date,
 ) -> StrategyOpinionTargetSnapshot | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT actual_date, strategy_version, codes_json, published_at
@@ -451,7 +452,7 @@ def read_latest_strategy_opinion_targets(
     *,
     as_of_date: date,
 ) -> StrategyOpinionTargetSnapshot | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT actual_date, strategy_version, codes_json, published_at
@@ -486,7 +487,7 @@ def create_manual_collection_jobs(
         current = chunk_end + timedelta(days=1)
 
     ids: list[int] = []
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         for chunk_start, chunk_end in ranges:
             cursor = connection.execute(
                 """
@@ -527,7 +528,7 @@ def schedule_automatic_collection_jobs(
 ) -> list[PublicOpinionCollectionJob]:
     targets = read_strategy_opinion_targets(path, actual_date=actual_date)
     created_ids: list[int] = []
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             UPDATE public_opinion_collection_jobs
@@ -641,7 +642,7 @@ def schedule_automatic_collection_jobs(
 
 
 def list_public_opinion_jobs(path: Path) -> list[PublicOpinionCollectionJob]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT id, platform, code, start_date, end_date, trigger, status,
@@ -709,7 +710,7 @@ def update_public_opinion_job(
     cursor: str | None = None,
     error_summary: str | None = None,
 ) -> PublicOpinionCollectionJob:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         result = connection.execute(
             """
             UPDATE public_opinion_collection_jobs
@@ -815,7 +816,7 @@ def sync_hot_discovery_snapshot(
             raise ValueError("热榜排名必须大于零")
     present_codes = {stock.code for stock in stocks}
     retained_until = _add_trading_days(actual_date, 4)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO public_opinion_discovery_snapshots (
@@ -889,7 +890,7 @@ def read_public_opinion_universe(
     *,
     as_of_date: date,
 ) -> list[PublicOpinionUniverseItem]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         discovery_rows = connection.execute(
             """
             SELECT platform, code, name, rank, active
@@ -952,7 +953,7 @@ def read_public_opinion_window(
     if days < 1:
         raise ValueError("舆论窗口天数必须大于零")
     start_date = end_date - timedelta(days=days - 1)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         completed_day_count = int(
             connection.execute(
                 """
@@ -1104,7 +1105,7 @@ def mark_public_opinion_deleted(
     _validate_code(code)
     if detected_at.tzinfo is None:
         raise ValueError("删除检测时间必须包含时区")
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             UPDATE public_opinion_content_references
@@ -1142,7 +1143,7 @@ def save_public_opinion_day(
         content.content_id for content in contents
     } != set(classifications):
         raise ValueError("大模型分类结果与保存内容编号不一致")
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         for content in contents:
             model_classification = (
                 None
@@ -1340,7 +1341,7 @@ def read_cached_model_classifications(
     prompt_version: str,
 ) -> dict[str, ModelOpinionClassification]:
     cached: dict[str, ModelOpinionClassification] = {}
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         for content in contents:
             digest = hashlib.sha256(content.text.encode("utf-8")).hexdigest()
             row = connection.execute(
@@ -1411,7 +1412,7 @@ def read_public_opinion_model_content_ids(
     end_date: date,
     prompt_version: str,
 ) -> set[str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT content_id
@@ -1455,7 +1456,7 @@ def rebuild_public_opinion_day(
         actual_date.isoformat(),
         *((rules_version,) if model_version else ()),
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             f"""
             SELECT sentiment, likes, classification_model,
@@ -1571,7 +1572,7 @@ def rebuild_public_opinion_day(
 def _read_latest_aggregate_map(
     path: Path,
 ) -> dict[tuple[str, OpinionPlatform], PlatformOpinionAggregate]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             WITH latest AS (
@@ -1600,7 +1601,7 @@ def _read_latest_aggregate_map(
 
 
 def _read_watchlist_entry(path: Path, code: str) -> OpinionWatchlistEntry:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT code, name, active, created_at, updated_at
@@ -1641,7 +1642,7 @@ def _read_security_names(path: Path, codes: set[str]) -> dict[str, str]:
         return {}
     placeholders = ",".join("?" for _ in codes)
     ordered_codes = sorted(codes)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             f"""
             WITH latest AS (

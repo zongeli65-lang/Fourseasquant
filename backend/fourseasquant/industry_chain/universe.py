@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import cast
 from zoneinfo import ZoneInfo
 
+from fourseasquant.sqlite_connection import open_database_connection
+
 ELIGIBILITY_RULES_VERSION = "industry-chain-main-board-v1"
 MINIMUM_LISTING_TRADING_DAYS = 60
 MAIN_BOARD_CODE = re.compile(r"^(?:000|001|002|003|600|601|603|605)\d{3}$")
@@ -160,7 +162,7 @@ class SqliteEligibleUniverseAdapter:
         )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path)
+        connection = open_database_connection(self._path)
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 

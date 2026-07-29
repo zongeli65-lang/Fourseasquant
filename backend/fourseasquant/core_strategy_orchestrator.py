@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -61,6 +60,7 @@ from fourseasquant.public_opinion_repository import (
     create_public_opinion_tables,
     publish_strategy_opinion_targets,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 class StrategyInvestigationPreparation(BaseModel):
@@ -146,7 +146,7 @@ def prepare_strategy_investigations(
             fees=fees or FeeSchedule(),
         )
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         create_public_opinion_tables(connection)
     fundamental_snapshot = publish_strategy_fundamental_targets(

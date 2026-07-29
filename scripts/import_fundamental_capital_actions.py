@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 import time
 from collections.abc import Callable
@@ -34,6 +33,7 @@ from fourseasquant.fundamental_repository import (  # noqa: E402
     read_latest_board_candidate_snapshot,
     save_capital_action_snapshot,
 )
+from fourseasquant.sqlite_connection import open_database_connection  # noqa: E402
 
 
 Result = TypeVar("Result")
@@ -236,7 +236,7 @@ def _candidate_codes(
 
 
 def _market_codes(path: Path, as_of_date: date) -> list[str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code
@@ -250,7 +250,7 @@ def _market_codes(path: Path, as_of_date: date) -> list[str]:
 
 
 def _technical_codes(path: Path, as_of_date: date) -> list[str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code
@@ -269,7 +269,7 @@ def _technical_codes(path: Path, as_of_date: date) -> list[str]:
 
 
 def _heat_codes(path: Path, as_of_date: date) -> list[str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code, MAX(COALESCE(heat_percentile, raw_heat)) AS heat
@@ -289,7 +289,7 @@ def _heat_codes(path: Path, as_of_date: date) -> list[str]:
 
 
 def _latest_market_date(path: Path) -> date:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT MAX(actual_data_date)

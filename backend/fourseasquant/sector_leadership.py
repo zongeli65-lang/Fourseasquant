@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -16,6 +15,7 @@ from fourseasquant.technical_scoring import (
     TechnicalParameters,
     TechnicalScoreView,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 TrendState = Literal["rising", "falling", "sideways"]
@@ -178,7 +178,7 @@ def save_membership_snapshot(
 ) -> None:
     payload = snapshot.model_dump_json()
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO sector_membership_snapshots (
@@ -203,7 +203,7 @@ def save_membership_snapshot(
 def read_latest_membership_snapshot(
     path: Path, requested_date: date
 ) -> SectorMembershipSnapshot | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT payload_json
@@ -228,7 +228,7 @@ def publish_election_results(
     published_at: datetime | None = None,
 ) -> int:
     publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             for item in result.results:
                 connection.execute(

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from fourseasquant.sqlite_connection import open_database_connection
+
 
 RETENTION_POLICY_VERSION = "industry-chain-retention-v0.3"
 DISCOVERY_RETENTION = timedelta(hours=72)
@@ -44,7 +46,7 @@ def dismiss_selection(
     _require_aware(now)
     if selection_version < 1:
         raise ValueError("selection_version 必须大于零")
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         exists = connection.execute(
             """
@@ -94,7 +96,7 @@ def cleanup_runtime_data(
     run_cutoff = now - run_retention
     started_at = now
     cleanup_run_id = f"cleanup-{uuid.uuid4().hex}"
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("BEGIN IMMEDIATE")
         try:

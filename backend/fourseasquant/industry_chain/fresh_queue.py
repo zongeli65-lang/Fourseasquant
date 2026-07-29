@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from fourseasquant.sqlite_connection import open_database_connection
 
 from .discovery import DiscoveryItem
 from .discovery import read_discovery_items
@@ -120,7 +121,7 @@ def read_fresh_news_funnel(
     as_of_time: datetime,
 ) -> FreshNewsFunnel:
     cutoff = as_of_time - NEWS_FRESHNESS
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             WITH fresh_primary AS (
@@ -185,7 +186,7 @@ def prune_untriaged_news(
     if keep < 1:
         raise ValueError("待初筛新闻保留量必须大于零")
     cutoff = as_of_time - NEWS_FRESHNESS
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT discovery.discovery_id
@@ -235,7 +236,7 @@ def prune_untriaged_news(
     )
     delete_ids = tuple(item.discovery_id for item in ordered[keep:])
     placeholders = ",".join("?" for _ in delete_ids)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             f"""
             DELETE FROM industry_chain_discovery_items
@@ -252,7 +253,7 @@ def cancel_low_value_queued_event_hunts(
     as_of_time: datetime,
 ) -> int:
     """取消不再符合当前供需精选标准的排队任务，但保留完整审计。"""
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT request.request_id, requested.value
@@ -289,7 +290,7 @@ def cancel_low_value_queued_event_hunts(
     if not cancelled_ids:
         return 0
     placeholders = ",".join("?" for _ in cancelled_ids)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             f"""
             UPDATE industry_chain_hunting_requests

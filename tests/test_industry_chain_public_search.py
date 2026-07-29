@@ -14,6 +14,8 @@ from fourseasquant.industry_chain.company_evidence import LocalCompanyEvidence
 from fourseasquant.industry_chain.control import (
     HuntingRequestRecord,
     claim_next_manual_hunt,
+    claim_next_source_event_hunt,
+    enqueue_source_event_hunt,
     set_hunting_enabled,
     submit_manual_hunt,
 )
@@ -684,20 +686,15 @@ def test_source_event_research_decomposes_chain_searches_and_recalls_company(
         },
     )
     append_discovery_items(database, (lead,))
-    request = HuntingRequestRecord(
-        request_id="request-glass-demand",
-        trigger_method="new_evidence",
-        trigger_type="source_event",
-        trigger_content=json.dumps({"discovery_ids": [lead.discovery_id]}),
-        source_url=lead.source_url,
-        as_of_time=now,
+    enqueue_source_event_hunt(
+        database,
+        discovery_ids=(lead.discovery_id,),
+        event_types=("supply_demand",),
         priority=1,
-        status="running",
-        requested_at=now,
-        started_at=now,
-        completed_at=None,
-        error_summary=None,
+        now=now,
     )
+    request = claim_next_source_event_hunt(database, now=now)
+    assert request is not None
 
     def model_transport(
         _: str,

@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fourseasquant.sqlite_connection import open_database_connection
+
 BEIJING = ZoneInfo("Asia/Shanghai")
 HISTORY_SOURCE = "akshare_sina_daily"
 RULES_VERSION = "market-environment-v1"
@@ -298,7 +300,7 @@ def refresh_market_environment(
         )
     except Exception as error:
         completed_at = datetime.now(BEIJING)
-        with sqlite3.connect(path) as connection:
+        with open_database_connection(path) as connection:
             connection.execute(
                 """
                 INSERT INTO market_environment_runs (
@@ -333,7 +335,7 @@ def read_market_environment(
     *,
     requested_date: date,
 ) -> MarketEnvironmentSnapshot:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT snapshot_json
@@ -357,7 +359,7 @@ def read_market_environment_history(
 ) -> MarketEnvironmentHistory:
     if not 1 <= limit <= 500:
         raise ValueError("limit 必须在1到500之间")
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT snapshot_json
@@ -561,7 +563,7 @@ def _load_index_bars(
 ) -> dict[str, tuple[str, list[_IndexBar]]]:
     result: dict[str, tuple[str, list[_IndexBar]]] = {}
     for code, name in (("sh000001", "上证指数"), ("sz399001", "深证成指")):
-        with sqlite3.connect(path) as connection:
+        with open_database_connection(path) as connection:
             rows = connection.execute(
                 """
                 SELECT actual_data_date, open, high, low, close, volume
@@ -599,7 +601,7 @@ def _load_main_board_breadth(
     )
     close_window: deque[float] = deque(maxlen=20)
     active_code = ""
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT actual_data_date, code, name, close, previous_close,
@@ -1220,7 +1222,7 @@ def _publish_snapshots(
     completed_at: datetime,
 ) -> int:
     inserted_count = 0
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             for snapshot in snapshots:
                 payload = json.dumps(

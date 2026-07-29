@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
@@ -20,6 +19,7 @@ from fourseasquant.fundamental_lynch_repository import (
     read_latest_published_lynch_financial_batch,
     save_lynch_daily_batch,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -55,7 +55,7 @@ def read_lynch_market_universe(
     path: Path,
     requested_date: date,
 ) -> LynchMarketUniverse:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT MAX(actual_data_date)

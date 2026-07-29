@@ -21,6 +21,7 @@ from fourseasquant.core_strategy_positions import (
     HoldingPosition,
     PositionManagementDecision,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 class StrategyFundamentalTargetSnapshot(BaseModel):
@@ -234,7 +235,7 @@ def publish_core_strategy_day(
         payload_json.encode("utf-8")
     ).hexdigest()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         existing = connection.execute(
             """
@@ -304,7 +305,7 @@ def read_core_strategy_day(
             raise ValueError("策略版本不能为空")
         filters.append("strategy_version = ?")
         parameters.append(normalized_version)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         row = connection.execute(
             f"""
@@ -335,7 +336,7 @@ def read_latest_core_strategy_day(
 
     if not path.exists():
         return None
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         row = connection.execute(
             """
@@ -378,7 +379,7 @@ def publish_core_strategy_portfolio(
         payload_json.encode("utf-8")
     ).hexdigest()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         strategy_day_exists = connection.execute(
             """
@@ -458,7 +459,7 @@ def read_core_strategy_portfolio(
             raise ValueError("策略版本不能为空")
         filters.append("strategy_version = ?")
         parameters.append(normalized_version)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         row = connection.execute(
             f"""
@@ -489,7 +490,7 @@ def read_latest_core_strategy_portfolio(
 
     if not path.exists():
         return None
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         row = connection.execute(
             """
@@ -558,7 +559,7 @@ def publish_strategy_fundamental_targets(
     )
     content_sha256 = hashlib.sha256(targets_json.encode("utf-8")).hexdigest()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         existing = connection.execute(
             """
@@ -629,7 +630,7 @@ def read_strategy_fundamental_targets(
             raise ValueError("策略版本不能为空")
         filters.append("strategy_version = ?")
         parameters.append(normalized_version)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         row = connection.execute(
             f"""
@@ -660,7 +661,7 @@ def read_latest_strategy_fundamental_targets(
 
     if not path.exists():
         return None
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)
         row = connection.execute(
             """

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 import time
 from collections.abc import Callable
@@ -43,6 +42,7 @@ from fourseasquant.fundamental_repository import (  # noqa: E402
     read_latest_published_capital_action_snapshot,
     save_personal_fundamental_monthly_batch,
 )
+from fourseasquant.sqlite_connection import open_database_connection  # noqa: E402
 
 Result = TypeVar("Result")
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -372,7 +372,7 @@ def _fetch_dividends(code: str) -> pd.DataFrame:
 
 
 def _latest_market_date(path: Path) -> date:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT MAX(actual_data_date)
@@ -387,7 +387,7 @@ def _latest_market_date(path: Path) -> date:
 
 
 def _market_codes(path: Path, as_of_date: date) -> list[str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code
@@ -401,7 +401,7 @@ def _market_codes(path: Path, as_of_date: date) -> list[str]:
 
 
 def _latest_close(path: Path, code: str, as_of_date: date) -> float:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT close
@@ -419,7 +419,7 @@ def _latest_close(path: Path, code: str, as_of_date: date) -> float:
 
 def _close_history(path: Path, code: str, as_of_date: date) -> pd.DataFrame:
     start_date = _one_year_before(as_of_date)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT actual_data_date, close

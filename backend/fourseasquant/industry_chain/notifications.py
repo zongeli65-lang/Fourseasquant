@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Protocol, cast
 
 from fourseasquant.automation import MacOSNotifier
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 class SelectionNotifier(Protocol):
@@ -28,7 +28,7 @@ def notify_selection(
     notification_id = (
         f"selection:{selection_id}:v{selection_version}:{status}"
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         existing = connection.execute(
             """
             SELECT delivery_status
@@ -64,7 +64,7 @@ def notify_selection(
         sort_keys=True,
         separators=(",", ":"),
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT OR IGNORE INTO industry_chain_notifications (

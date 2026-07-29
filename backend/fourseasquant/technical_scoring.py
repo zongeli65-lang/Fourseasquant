@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from fourseasquant.akshare_history import HISTORY_SOURCE
 from fourseasquant.candlesticks import index_source
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 ALGORITHM_VERSION = "technical-v3"
@@ -153,7 +154,7 @@ def score_technical_history(
     parameters_json = parameters.model_dump_json()
     score_count = 0
 
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.execute(
                 """
@@ -253,7 +254,7 @@ def score_technical_history(
 
 
 def read_technical_score_status(path: Path) -> TechnicalScoreStatus:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT version, official_start, official_end, qfq_source,
@@ -300,7 +301,7 @@ def read_top_technical_scores(
     if status.publication is None:
         return []
     version = status.publication.version
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         actual_row = connection.execute(
             """
             SELECT MAX(actual_data_date)
@@ -376,7 +377,7 @@ def read_technical_score_page(
     selected_page = max(1, page)
     selected_page_size = max(1, min(page_size, 100))
     normalized_search = search.strip()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         actual_row = connection.execute(
             """
             SELECT MAX(actual_data_date)
@@ -682,7 +683,7 @@ def _filter_stale_scores(
 def _load_price_rows(
     path: Path, qfq_source: str, official_end: date
 ) -> list[_PriceRow]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT actual_data_date, code, name, open, high, low, close,
@@ -715,7 +716,7 @@ def _load_benchmark_closes(
 ) -> dict[str, dict[date, float]]:
     symbols = ("sh000001", "sz399001", "sh000300", "sz399006", "sh000688")
     result: dict[str, dict[date, float]] = {}
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         for symbol in symbols:
             rows = connection.execute(
                 """

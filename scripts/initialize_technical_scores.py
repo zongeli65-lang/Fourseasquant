@@ -17,6 +17,7 @@ from fourseasquant.database import (  # noqa: E402
     database_path,
     initialize_database,
 )
+from fourseasquant.sqlite_connection import open_database_connection  # noqa: E402
 from fourseasquant.technical_scoring import (  # noqa: E402
     ALGORITHM_VERSION,
     score_technical_history,
@@ -93,9 +94,7 @@ def main() -> int:
 
 
 def _latest_qfq_end(path: Path) -> date:
-    import sqlite3
-
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT MAX(actual_data_date)
@@ -108,9 +107,7 @@ def _latest_qfq_end(path: Path) -> date:
 
 
 def _latest_qfq_source(path: Path, actual_end: date) -> str:
-    import sqlite3
-
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT qfq_source

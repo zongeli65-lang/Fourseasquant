@@ -38,6 +38,7 @@ from fourseasquant.public_opinion_repository import (
     list_public_opinion_jobs,
     schedule_automatic_collection_jobs,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 from fourseasquant.trading_calendar import is_trading_day
 
 
@@ -221,7 +222,7 @@ def initialize_core_strategy_account(
     if initialized_at.tzinfo is None:
         raise ValueError("账户初始化时间必须包含时区")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
         existing = connection.execute(
             """
@@ -272,7 +273,7 @@ def reset_core_strategy_account(
         raise ValueError("账户重置时间必须包含时区")
     _ensure_runtime_database(path)
     detached_version = f"reset:{reset_at.isoformat()}"
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
         account_row = connection.execute(
             """
@@ -930,12 +931,12 @@ def read_core_strategy_run_status(
 
 def _ensure_runtime_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
 
 
 def _read_account(path: Path) -> CoreStrategyAccount | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
         row = connection.execute(
             """
@@ -1000,7 +1001,7 @@ def _publish_preparation(
     ).hexdigest()
     actual_date = preparation.daily_inputs.actual_date
     strategy_version = preparation.opinion_targets.strategy_version
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
         existing = connection.execute(
             """
@@ -1045,7 +1046,7 @@ def _read_preparation(
     actual_date: date,
     strategy_version: str,
 ) -> StrategyInvestigationPreparation | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
         row = connection.execute(
             """
@@ -1073,7 +1074,7 @@ def _record_attempt(
     attempted_at: datetime,
     error_summary: str | None,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
         connection.execute(
             """
@@ -1105,7 +1106,7 @@ def _read_latest_attempt(
     requested_date: date,
     strategy_version: str,
 ) -> CoreStrategyRuntimeAttempt | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         create_core_strategy_runtime_tables(connection)
         row = connection.execute(
             """

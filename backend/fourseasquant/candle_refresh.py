@@ -25,6 +25,7 @@ from fourseasquant.candlesticks import (
     promote_staged_candle_dates,
 )
 from fourseasquant.settings import read_settings
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 @dataclass(frozen=True)
@@ -192,7 +193,7 @@ def _validate_security_daily_fact_coverage(
         frame = frame[~frame["名称"].astype(str).str.contains("退", na=False)]
     active_codes = set(frame.loc[frame["成交量"] > 0, "代码"].tolist())
     target = requested_end_date.isoformat()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         previously_eligible = _eligible_codes(
             connection,
             target=target,
@@ -308,7 +309,7 @@ def _invalidate_incomplete_target(
     missing_raw: set[str],
     missing_qfq: set[str],
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         for source, range_start, codes in (
             (raw_source, raw_range_start, missing_raw),
             (qfq_source, qfq_range_start, missing_qfq),

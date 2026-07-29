@@ -42,6 +42,7 @@ from fourseasquant.public_opinion_repository import (
     PublicOpinionWindow,
     read_public_opinion_window,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 from fourseasquant.technical_scoring import Board, DerivativeState
 
 
@@ -382,7 +383,7 @@ def _technical_publication(
     *,
     actual_date: date,
 ) -> tuple[str, str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT version, qfq_source
@@ -407,7 +408,7 @@ def _require_candle_publication(
     actual_date: date,
     qfq_source: str,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT 1
@@ -427,7 +428,7 @@ def _read_technical_rankings(
     technical_version: str,
     qfq_source: str,
 ) -> list[TechnicalRankingEvidence]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             WITH ranked AS (
@@ -504,7 +505,7 @@ def _read_industry_candidates(
     actual_date: date,
 ) -> tuple[list[IndustryChainCandidateEvidence], str | None, bool]:
     try:
-        with sqlite3.connect(path) as connection:
+        with open_database_connection(path) as connection:
             rows = connection.execute(
                 """
                 WITH latest AS (
@@ -592,7 +593,7 @@ def _eligible_industry_candidates(
     if not codes:
         return [], []
     placeholders = ",".join("?" for _ in codes)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             f"""
             SELECT code, name
@@ -691,7 +692,7 @@ def _read_raw_bar(
     code: str,
     actual_date: date,
 ) -> RawDailyBar | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT open, high, low, close, previous_close, change_pct,
@@ -730,7 +731,7 @@ def _read_technical_analysis(
     qfq_source: str,
     corporate_actions_complete: bool,
 ) -> DailyTechnicalAnalysis | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT

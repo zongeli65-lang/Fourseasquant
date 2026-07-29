@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 
+from fourseasquant.sqlite_connection import open_database_connection
+
 
 SOURCE_CONFIG_VERSION = "industry-chain-sources-v0.4"
 PREVIOUS_SOURCE_CONFIG_VERSION = "industry-chain-sources-v0.3"
@@ -353,7 +355,7 @@ def seed_source_registry(
 
 
 def read_latest_sources(path: Path) -> tuple[RegisteredSource, ...]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT source_id, source_version, source_name, base_url, domain,

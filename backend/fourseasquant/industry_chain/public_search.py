@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import sqlite3
 import uuid
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable
@@ -16,6 +15,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from fourseasquant.sqlite_connection import open_database_connection
 
 from .candidate_expansion import expand_candidate_companies
 from .company_evidence import LocalCompanyEvidence
@@ -2336,7 +2337,7 @@ def _insert_search_run(
         f"{prompt_version}|{request.trigger_content}".encode()
     ).hexdigest()
     timestamp = completed_at.isoformat()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT OR IGNORE INTO industry_chain_search_runs (

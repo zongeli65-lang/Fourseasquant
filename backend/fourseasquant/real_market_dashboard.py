@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -10,6 +9,7 @@ from typing import Literal, cast
 from pydantic import BaseModel, Field
 
 from fourseasquant.akshare_history import HISTORY_SOURCE
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 class RealMarketDataNotFound(LookupError):
@@ -112,7 +112,7 @@ def read_real_market_dashboard(
     path: Path, requested_date: date
 ) -> RealMarketDashboard:
     actual_data_date = _latest_actual_data_date(path, requested_date)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         trend_rows = connection.execute(
             """
             SELECT facts.actual_data_date,
@@ -263,7 +263,7 @@ def read_overview_securities(
     query: str = "",
 ) -> OverviewSecurityPage:
     actual_date = _latest_actual_data_date(path, requested_date)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code, name, close, change_pct, turnover_cny
@@ -318,7 +318,7 @@ def read_overview_securities(
 
 
 def _latest_actual_data_date(path: Path, requested_date: date) -> date:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[str] | None,
             connection.execute(
@@ -351,7 +351,7 @@ def _classify_securities(
     securities: list[SecurityMarketView],
 ) -> dict[str, _SecurityClassification]:
     codes = {security.code for security in securities}
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         date_rows = connection.execute(
             """
             SELECT DISTINCT actual_data_date

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -30,6 +29,7 @@ from fourseasquant.fundamental_repository import (
     read_latest_fundamental_update_attempt,
     read_latest_published_capital_action_snapshot,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 FundamentalDataStatus = Literal["complete", "partial", "no_data"]
@@ -147,7 +147,7 @@ def read_latest_board_candidate_publication(
         filters.append("effective_date <= ?")
         parameters.append(target_date.isoformat())
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             f"""
             SELECT payload_json, collected_at
@@ -207,7 +207,7 @@ def read_monthly_fundamental_series(
     else:
         date_filter = "AND as_of_date <= ?"
         parameters = (code, rules_version, target_date.isoformat())
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             f"""
             SELECT as_of_date, rules_version, changed_fields_json,
@@ -443,7 +443,7 @@ def read_discussion_series(
         where_parts.append("actual_date <= ?")
         parameters.append(end_date.isoformat())
     where_clause = " AND ".join(where_parts)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         aggregate_rows = connection.execute(
             f"""
             SELECT platform, actual_date, post_count, positive_count,
@@ -679,7 +679,7 @@ def _stored_fundamental_codes(
             target_date.isoformat(),
         )
         discussion_parameters = (target_date.isoformat(),)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         monthly = connection.execute(
             f"""
             SELECT DISTINCT code
@@ -777,7 +777,7 @@ def _read_latest_monthly_map(
     if target_date is not None:
         date_filter = "AND as_of_date <= ?"
         parameters = (RULES_VERSION, target_date.isoformat())
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             f"""
             SELECT code, as_of_date, rules_version, changed_fields_json,
@@ -842,7 +842,7 @@ def _read_latest_discussion_map(
             GROUP BY code
         )
     """
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         latest_rows = connection.execute(
             f"""
             {latest_cte}

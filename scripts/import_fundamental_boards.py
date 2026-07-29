@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import sys
 import time
 from collections.abc import Callable
@@ -26,6 +25,7 @@ from fourseasquant.fundamental_discovery import (  # noqa: E402
 from fourseasquant.fundamental_repository import (  # noqa: E402
     save_board_candidate_snapshot,
 )
+from fourseasquant.sqlite_connection import open_database_connection  # noqa: E402
 
 Result = TypeVar("Result")
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -111,7 +111,7 @@ def _disable_application_proxy_environment() -> None:
 
 
 def _latest_eligible_codes(path: Path) -> set[str]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         latest_date = connection.execute(
             """
             SELECT MAX(actual_data_date)

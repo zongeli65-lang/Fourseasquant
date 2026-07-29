@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from fourseasquant.fundamental_mechanical import RULES_VERSION
 from fourseasquant.industry_chain.universe import EligibleUniverseSnapshot
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 MAX_CODES_PER_QUERY = 50
@@ -84,7 +85,7 @@ class SqliteCompanyEvidenceAdapter:
         if outside:
             raise StockScopeViolation(f"股票不在合格范围：{outside}")
         names = {item.code: item.name for item in universe.securities}
-        with sqlite3.connect(self._path) as connection:
+        with open_database_connection(self._path) as connection:
             return tuple(
                 self._query_one(
                     connection,
@@ -118,7 +119,7 @@ class SqliteCompanyEvidenceAdapter:
             for item in universe.securities
             if len(item.name.strip()) >= 2 and item.name in corpus_text
         }
-        with sqlite3.connect(self._path) as connection:
+        with open_database_connection(self._path) as connection:
             business_rows = _business_recall_rows(
                 connection,
                 universe=universe,

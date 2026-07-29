@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Literal, cast
 
 from pydantic import BaseModel, Field, field_validator
 
+from fourseasquant.sqlite_connection import open_database_connection
 
 Benchmark = Literal["沪深 300", "中证 500"]
 DataAdapter = Literal["simulation", "simulation_conservative"]
@@ -45,7 +45,7 @@ def _response(settings: SettingsUpdate) -> SettingsResponse:
 
 
 def read_settings(path: Path) -> SettingsResponse:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = cast(
             tuple[str, str, str, int],
             connection.execute(
@@ -70,7 +70,7 @@ def read_settings(path: Path) -> SettingsResponse:
 
 
 def save_settings(path: Path, settings: SettingsUpdate) -> SettingsResponse:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             UPDATE app_settings

@@ -10,6 +10,8 @@ from typing import Literal, cast
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+from fourseasquant.sqlite_connection import open_database_connection
+
 from .fresh_queue import NEWS_FRESHNESS, read_fresh_news_funnel
 from .policy import ACTIVE_SELECTION_RULES_VERSION
 
@@ -96,7 +98,7 @@ def read_runtime_status(
     now: datetime | None = None,
 ) -> RuntimeStatus:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT enabled, state, paused_at, resumed_at, catchup_from,
@@ -246,7 +248,7 @@ def set_hunting_enabled(
 ) -> RuntimeStatus:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
     timestamp = current.isoformat()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         row = connection.execute(
             """
@@ -325,7 +327,7 @@ def complete_hunting_pause(
 ) -> RuntimeStatus:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
     timestamp = current.isoformat()
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.execute(
                 """
@@ -366,7 +368,7 @@ def submit_manual_hunt(
         if parsed.username or parsed.password:
             raise ValueError("网址不能包含账号或密码")
         source_url = normalized
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         enabled_row = connection.execute(
             "SELECT enabled FROM industry_chain_runtime_control WHERE id = 1"
         ).fetchone()
@@ -396,7 +398,7 @@ def read_hunting_requests(
 ) -> tuple[HuntingRequestRecord, ...]:
     if not 1 <= limit <= 100:
         raise ValueError("limit 必须在 1 到 100 之间")
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT request_id, trigger_method, trigger_type, trigger_content,
@@ -415,7 +417,7 @@ def read_hunting_request(
     path: Path,
     request_id: str,
 ) -> HuntingRequestRecord | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT request_id, trigger_method, trigger_type, trigger_content,
@@ -435,7 +437,7 @@ def record_worker_heartbeat(
     now: datetime | None = None,
 ) -> None:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             UPDATE industry_chain_runtime_control
@@ -472,7 +474,7 @@ def record_runtime_activity(
         assignments.append("last_model_run_at = ?")
         values.append(current.isoformat())
     values.append(1)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             f"""
             UPDATE industry_chain_runtime_control
@@ -489,7 +491,7 @@ def record_cleanup_completed(
     now: datetime,
 ) -> None:
     current = now.astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             UPDATE industry_chain_runtime_control
@@ -506,7 +508,7 @@ def claim_next_manual_hunt(
     now: datetime,
 ) -> HuntingRequestRecord | None:
     current = now.astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             row = connection.execute(
                 """
@@ -541,7 +543,7 @@ def claim_next_source_event_hunt(
     now: datetime,
 ) -> HuntingRequestRecord | None:
     current = now.astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             connection.execute(
                 """
@@ -594,7 +596,7 @@ def finish_hunting_request(
     error_summary: str | None = None,
 ) -> HuntingRequestRecord:
     current = now.astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             UPDATE industry_chain_hunting_requests
@@ -622,7 +624,7 @@ def recover_interrupted_hunts(
     now: datetime,
 ) -> tuple[int, int]:
     current = now.astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             completed = connection.execute(
                 """
@@ -656,7 +658,7 @@ def finish_catchup_requests(
     now: datetime,
 ) -> int:
     current = now.astimezone(BEIJING)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         cursor = connection.execute(
             """
             UPDATE industry_chain_hunting_requests
@@ -682,7 +684,7 @@ def enqueue_source_event_hunt(
 ) -> HuntingRequestRecord:
     if not discovery_ids:
         raise ValueError("来源事件至少需要一个发现项")
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             request_id = _insert_request(
                 connection,

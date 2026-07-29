@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Mapping, cast
 
 from fourseasquant.industry_chain.selection_validation import validate_selection
+from fourseasquant.sqlite_connection import open_database_connection
 from fourseasquant.industry_chain.policy import (
     ACTIVE_SELECTION_RULES_VERSION,
 )
@@ -451,7 +452,7 @@ class IndustryChainRepository:
                 raise IneligibleEvidenceError("低等级或不可访问来源不能支撑入选")
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path)
+        connection = open_database_connection(self._path)
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
@@ -480,7 +481,7 @@ def read_recent_selections(
 ) -> tuple[dict[str, object], ...]:
     if not 1 <= limit <= 50:
         raise ValueError("limit 必须在 1 到 50 之间")
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT selection.snapshot_json

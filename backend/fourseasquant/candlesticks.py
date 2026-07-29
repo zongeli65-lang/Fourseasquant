@@ -19,6 +19,7 @@ from fourseasquant.database import (
     latest_task_run,
     save_historical_benchmark_fact,
 )
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 INDEXES: dict[str, str] = {
@@ -147,7 +148,7 @@ def publish_complete_candle_dates(
     publication_start: date | None = None,
 ) -> int:
     publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             return _publish_complete_candle_dates(
                 connection,
@@ -171,7 +172,7 @@ def promote_staged_candle_dates(
     published_at: datetime | None = None,
 ) -> int:
     publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             _replace_security_source_range(
                 connection,
@@ -252,7 +253,7 @@ def discard_staged_candle_attempt(
     qfq_staging_source: str,
     index_version_tag: str,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             _discard_staged_candle_attempt(
                 connection,
@@ -473,7 +474,7 @@ def _publish_complete_candle_dates(
 
 
 def latest_candle_publication(path: Path, requested_date: date) -> date | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT actual_data_date
@@ -537,7 +538,7 @@ def read_candle_availability(
 
 
 def _published_qfq_source(path: Path, actual_date: date) -> str:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT qfq_source FROM candle_dataset_publications
@@ -563,7 +564,7 @@ def search_eligible_securities(
         return []
     search = query.strip()
     like = f"%{search}%"
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT code, name
@@ -653,7 +654,7 @@ def _read_stock_candles(
         if adjustment == "qfq"
         else HISTORY_SOURCE
     )
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT actual_data_date, open, high, low, close, volume,
@@ -670,7 +671,7 @@ def _read_stock_candles(
 def _read_index_candles(
     path: Path, symbol: str, actual_date: date
 ) -> list[CandlePoint]:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT actual_data_date, open, high, low, close, volume
@@ -750,7 +751,7 @@ def _read_real_trade_markers(
     path: Path, code: str, actual_date: date
 ) -> list[TradeMarker]:
     markers: list[TradeMarker] = []
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             """
             SELECT payload_json

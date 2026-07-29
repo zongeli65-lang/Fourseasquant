@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import cast
+
+from fourseasquant.sqlite_connection import open_database_connection
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ def append_discovery_items(
 ) -> AppendDiscoveryResult:
     inserted: list[str] = []
     duplicates = 0
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         with connection:
             for item in items:
                 cursor = connection.execute(
@@ -91,7 +92,7 @@ def read_discovery_items(
     if not discovery_ids:
         return ()
     placeholders = ",".join("?" for _ in discovery_ids)
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         rows = connection.execute(
             f"""
             SELECT discovery_id, source_id, external_id, security_code,
@@ -125,7 +126,7 @@ def read_source_checkpoint(
     path: Path,
     source_id: str,
 ) -> str | None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         row = connection.execute(
             """
             SELECT last_external_id
@@ -147,7 +148,7 @@ def save_source_checkpoint(
     status: str,
     error_summary: str | None = None,
 ) -> None:
-    with sqlite3.connect(path) as connection:
+    with open_database_connection(path) as connection:
         connection.execute(
             """
             INSERT INTO industry_chain_source_checkpoints (
