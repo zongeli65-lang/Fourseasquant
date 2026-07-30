@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from fourseasquant.technical_scoring import DerivativeState
 
 
-TECHNICAL_SIGNAL_VERSION = "core-technical-v3"
+TECHNICAL_SIGNAL_VERSION = "core-technical-v4"
 PatternDirection = Literal["bullish", "bearish", "neutral"]
 PatternFunction = Literal["reversal", "continuation", "neutral"]
 PatternStrength = Literal["strong", "weak", "neutral"]
@@ -2207,11 +2207,6 @@ def _pressure_target(
     current_close: float,
     resistances: list[TechnicalLevel],
 ) -> float | None:
-    if any(
-        resistance.lower <= current_close <= resistance.upper
-        for resistance in resistances
-    ):
-        return None
     higher = [
         resistance.lower
         for resistance in resistances

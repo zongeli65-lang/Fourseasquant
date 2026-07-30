@@ -858,7 +858,7 @@ def test_support_containing_current_price_has_zero_distance() -> None:
     )
 
 
-def test_unresolved_pressure_zone_blocks_farther_target() -> None:
+def test_price_inside_pressure_zone_uses_next_higher_target() -> None:
     bars = _random_walk(seed=1, size=90)
 
     analysis = _analyze(bars)
@@ -873,7 +873,9 @@ def test_unresolved_pressure_zone_blocks_farther_target() -> None:
         for level in analysis.resistances
     )
     assert analysis.valid_volume_breakout is False
-    assert analysis.pressure_target is None
+    assert analysis.pressure_target == pytest.approx(
+        98.07290888902276
+    )
 
 
 def test_suspended_pressure_zone_yields_to_next_higher_target() -> None:
@@ -950,4 +952,4 @@ def test_converted_support_is_resorted_by_price_distance() -> None:
         <= resistance.upper + 0.10 * analysis.mr20
         for resistance in analysis.resistances
     )
-    assert analysis.rules_version == "core-technical-v3"
+    assert analysis.rules_version == "core-technical-v4"
