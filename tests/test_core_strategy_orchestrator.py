@@ -12,8 +12,15 @@ from fourseasquant.core_strategy_adapters import (
     RawDailyBar,
     StrategyOpinionEvidence,
 )
-from fourseasquant.core_strategy_execution import PortfolioForEntry
-from fourseasquant.core_strategy_positions import HoldingPosition
+from fourseasquant.core_strategy_execution import (
+    EntryPlanningDecision,
+    EntryPlanningInput,
+    PortfolioForEntry,
+)
+from fourseasquant.core_strategy_positions import (
+    HoldingPosition,
+    PositionObservation,
+)
 from fourseasquant.core_strategy_repository import (
     CoreStrategyInputVersions,
     read_latest_core_strategy_portfolio,
@@ -270,3 +277,83 @@ def test_missing_holding_mark_does_not_publish_partial_portfolio(
         )
         is None
     )
+
+
+def test_new_entry_sizing_uses_same_day_marked_portfolio_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "orchestrator-current-nav.db"
+    monkeypatch.setattr(
+        orchestrator,
+        "load_core_strategy_daily_inputs",
+        lambda *_, **__: _daily_inputs(),
+    )
+    published_at = datetime(2026, 7, 28, 16, tzinfo=BEIJING)
+    portfolio = PortfolioForEntry(
+        initial_capital=100_000,
+        net_asset_value=100_000,
+        available_cash=90_000,
+        held_codes=["600001"],
+    )
+    preparation = prepare_strategy_investigations(
+        database,
+        requested_date=ACTUAL_DATE,
+        strategy_version="core-strategy-v1-test",
+        corporate_actions_complete=True,
+        portfolio=portfolio,
+        fundamental_investigations=None,
+        published_at=published_at,
+    )
+    position = HoldingPosition(
+        code="600001",
+        name="测试公司",
+        shares=1_000,
+        cost_price=10,
+        stop_price=8.9,
+        pressure_target=30,
+        initial_risk=1.1,
+        highest_close_since_entry=10,
+    )
+    observation = PositionObservation(
+        code="600001",
+        open=20,
+        high=20,
+        low=20,
+        close=20,
+        limit_down_price=9,
+    )
+    captured_nav: list[float] = []
+    original_plan_new_entries = orchestrator.plan_new_entries
+
+    def capture_plan(
+        source: EntryPlanningInput,
+    ) -> EntryPlanningDecision:
+        captured_nav.append(source.portfolio.net_asset_value)
+        return original_plan_new_entries(source)
+
+    monkeypatch.setattr(
+        orchestrator,
+        "plan_new_entries",
+        capture_plan,
+    )
+
+    result = finalize_strategy_day(
+        database,
+        preparation=preparation,
+        opinions=[
+            StrategyOpinionEvidence(
+                code="600001",
+                targeted=False,
+                status="not_targeted",
+            )
+        ],
+        portfolio=portfolio,
+        positions=[position],
+        observations=[observation],
+        published_at=published_at,
+    )
+
+    assert captured_nav == [110_000]
+    assert result.portfolio is not None
+    assert result.portfolio.snapshot.net_asset_value == 110_000

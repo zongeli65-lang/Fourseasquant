@@ -233,6 +233,11 @@ def finalize_strategy_day(
         position.code
         for position in position_decision.positions
     ]
+    same_day_net_asset_value = _marked_net_asset_value(
+        available_cash=cash_after_exits,
+        positions=position_decision.positions,
+        observations=position_observations,
+    )
     entry_decision = plan_new_entries(
         EntryPlanningInput(
             actual_date=daily.actual_date,
@@ -243,6 +248,11 @@ def finalize_strategy_day(
                 update={
                     "available_cash": cash_after_exits,
                     "held_codes": surviving_codes,
+                    "net_asset_value": (
+                        same_day_net_asset_value
+                        if same_day_net_asset_value is not None
+                        else portfolio.net_asset_value
+                    ),
                 }
             ),
             candidates=_entry_candidates(
@@ -300,6 +310,32 @@ def finalize_strategy_day(
         portfolio_publication_status=portfolio_publication_status,
         portfolio=published_portfolio,
         portfolio_publication_blocked_codes=missing_mark_codes,
+    )
+
+
+def _marked_net_asset_value(
+    *,
+    available_cash: float,
+    positions: list[HoldingPosition],
+    observations: list[PositionObservation],
+) -> float | None:
+    observation_by_code = {
+        observation.code: observation
+        for observation in observations
+    }
+    if any(
+        position.code not in observation_by_code
+        for position in positions
+    ):
+        return None
+    return round(
+        available_cash
+        + sum(
+            position.shares
+            * observation_by_code[position.code].close
+            for position in positions
+        ),
+        2,
     )
 
 
