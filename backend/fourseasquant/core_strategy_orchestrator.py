@@ -161,19 +161,27 @@ def prepare_strategy_investigations(
         pipeline=pipeline,
         opinions={},
     )
-    opinion_codes = rank_candidates_for_opinion(
-        OpinionTargetSelectionInput(
-            strategy_version=strategy_version,
-            market_state=daily.market_state,
-            candidates=provisional,
-            held_codes=reference_portfolio.held_codes,
-            reference_full_position_slot=(
-                reference_portfolio.net_asset_value
-                / _maximum_positions(reference_portfolio.initial_capital)
-            ),
-            reference_available_cash=reference_portfolio.available_cash,
-            fees=fee_schedule,
+    opinion_codes = (
+        rank_candidates_for_opinion(
+            OpinionTargetSelectionInput(
+                strategy_version=strategy_version,
+                market_state=daily.market_state,
+                candidates=provisional,
+                held_codes=reference_portfolio.held_codes,
+                reference_full_position_slot=(
+                    reference_portfolio.net_asset_value
+                    / _maximum_positions(
+                        reference_portfolio.initial_capital
+                    )
+                ),
+                reference_available_cash=(
+                    reference_portfolio.available_cash
+                ),
+                fees=fee_schedule,
+            )
         )
+        if daily.market_state == "rising"
+        else []
     )
     with open_database_connection(path) as connection:
         create_core_strategy_tables(connection)

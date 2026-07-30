@@ -167,6 +167,52 @@ def test_two_phase_orchestration_publishes_targets_then_trade_day(
     assert result.portfolio.snapshot.net_asset_value < 100_000
 
 
+@pytest.mark.parametrize("market_state", ["sideways", "falling"])
+def test_non_rising_market_skips_investigations_and_keeps_technical_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    market_state: str,
+) -> None:
+    database = tmp_path / f"orchestrator-{market_state}.db"
+    daily = _daily_inputs().model_copy(
+        update={
+            "market_state": market_state,
+            "candidates": [
+                _daily_inputs().candidates[0].model_copy(
+                    update={
+                        "preliminary": _daily_inputs()
+                        .candidates[0]
+                        .preliminary.model_copy(
+                            update={"route": "pure_technical"}
+                        )
+                    }
+                )
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "load_core_strategy_daily_inputs",
+        lambda *_, **__: daily,
+    )
+
+    preparation = prepare_strategy_investigations(
+        database,
+        requested_date=ACTUAL_DATE,
+        strategy_version="core-strategy-v8-test",
+        corporate_actions_complete=True,
+        portfolio=_portfolio(),
+        fundamental_investigations=None,
+        published_at=datetime(2026, 7, 28, 16, tzinfo=BEIJING),
+    )
+
+    assert preparation.candidate_pipeline.candidates[0].route == (
+        "pure_technical"
+    )
+    assert preparation.fundamental_targets.targets == []
+    assert preparation.opinion_targets.codes == []
+
+
 def test_finalize_rejects_unpublished_opinion_target_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
