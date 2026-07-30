@@ -858,7 +858,7 @@ def test_support_containing_current_price_has_zero_distance() -> None:
     )
 
 
-def test_unresolved_pressure_zone_blocks_farther_target() -> None:
+def test_price_inside_pressure_zone_uses_next_higher_target() -> None:
     bars = _random_walk(seed=1, size=90)
 
     analysis = _analyze(bars)
@@ -873,7 +873,63 @@ def test_unresolved_pressure_zone_blocks_farther_target() -> None:
         for level in analysis.resistances
     )
     assert analysis.valid_volume_breakout is False
-    assert analysis.pressure_target is None
+    assert analysis.pressure_target == pytest.approx(
+        98.07290888902276
+    )
+
+
+def test_suspended_pressure_zone_yields_to_next_higher_target() -> None:
+    bars = _random_walk(seed=16, size=90)
+
+    analysis = _analyze(bars)
+
+    suspended = next(
+        level
+        for level in analysis.resistances
+        if level.sources == ["consolidation"]
+        and level.upper < bars[-1].close
+    )
+    assert bars[-1].close < (
+        suspended.upper
+        + 0.5 * (suspended.upper - suspended.lower)
+    )
+    assert analysis.pressure_target == pytest.approx(
+        73.32953099820135
+    )
+
+
+def test_price_breakout_at_half_zone_width_converts_pressure_to_support() -> None:
+    bars = _random_walk(seed=16, size=90)
+    last = bars[-1]
+
+    def analyze_at_close(close: float) -> DailyTechnicalAnalysis:
+        return _analyze(
+            [
+                *bars[:-1],
+                last.model_copy(
+                    update={
+                        "close": close,
+                        "high": max(last.high, close + 0.1),
+                        "low": min(last.low, close - 0.1),
+                    }
+                ),
+            ]
+        )
+
+    below_threshold = analyze_at_close(71.0)
+    above_threshold = analyze_at_close(71.5)
+
+    assert any(
+        level.sources == ["consolidation"]
+        for level in below_threshold.resistances
+    )
+    assert any(
+        "consolidation" in level.sources
+        and "polarity_conversion" in level.sources
+        for level in above_threshold.supports
+    )
+    assert above_threshold.valid_volume_breakout is False
+    assert above_threshold.confirmed_pressure_breakout is True
 
 
 def test_converted_support_is_resorted_by_price_distance() -> None:
@@ -884,13 +940,9 @@ def test_converted_support_is_resorted_by_price_distance() -> None:
     )
 
     analysis = _analyze(bars)
-    nearest = min(
-        analysis.supports,
-        key=lambda level: abs(bars[-1].close - level.upper),
-    )
-
     assert analysis.valid_volume_breakout is True
-    assert analysis.supports[0] == nearest
+    nearest = analysis.supports[0]
+    assert nearest.lower <= bars[-1].close <= nearest.upper
     assert analysis.mr20 is not None
     assert analysis.stop_price == pytest.approx(
         nearest.lower - 0.10 * analysis.mr20
@@ -900,4 +952,4 @@ def test_converted_support_is_resorted_by_price_distance() -> None:
         <= resistance.upper + 0.10 * analysis.mr20
         for resistance in analysis.resistances
     )
-    assert analysis.rules_version == "core-technical-v2"
+    assert analysis.rules_version == "core-technical-v4"

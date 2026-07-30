@@ -667,23 +667,92 @@ def test_maximum_position_count_is_fixed_by_initial_capital() -> None:
     assert len(decision.orders) == 5
 
 
-def test_suspension_and_limit_down_block_buy_but_limit_up_is_allowed() -> None:
+def test_v4_replay_allows_limit_up_buy() -> None:
+    limit_up = _candidate(
+        code="600002",
+        price_priority="limit_up",
+    )
+
+    decision = _plan(
+        limit_up,
+        initial_capital=100_000,
+        strategy_version="core-strategy-v4-test",
+    )
+
+    assert [order.code for order in decision.orders] == ["600002"]
+    assert decision.candidates[0].block_reasons == []
+
+
+def test_v4_replay_keeps_limit_up_in_opinion_targets() -> None:
+    limit_up = _candidate(
+        code="600002",
+        price_priority="limit_up",
+    )
+
+    targets = rank_candidates_for_opinion(
+        OpinionTargetSelectionInput(
+            strategy_version="core-strategy-v4-test",
+            market_state="rising",
+            candidates=[limit_up],
+            reference_available_cash=100_000,
+        )
+    )
+
+    assert targets == ["600002"]
+
+
+def test_v5_blocks_limit_up_buy_even_with_valid_entry_trigger() -> None:
     suspended = _candidate(code="600000", suspended=True)
     limit_down = _candidate(code="600001", at_limit_down=True, preliminary_rank=2)
     limit_up = _candidate(
         code="600002",
         price_priority="limit_up",
         preliminary_rank=3,
+        strong_evidence_ids=["strong-candle", "strong-rsi"],
+        net_reward_risk_ratio=3,
+    )
+    ordinary = _candidate(
+        code="600003",
+        preliminary_rank=4,
     )
 
     decision = _plan(
         suspended,
         limit_down,
         limit_up,
+        ordinary,
         initial_capital=100_000,
+        strategy_version="core-strategy-v5-test",
     )
 
-    assert [order.code for order in decision.orders] == ["600002"]
+    assert [order.code for order in decision.orders] == ["600003"]
+    limit_up_decision = next(
+        item for item in decision.candidates if item.code == "600002"
+    )
+    assert limit_up_decision.grade == "S"
+    assert "limit_up" in limit_up_decision.block_reasons
+
+
+def test_v5_excludes_limit_up_from_opinion_targets() -> None:
+    limit_up = _candidate(
+        code="600000",
+        price_priority="limit_up",
+    )
+    ordinary = _candidate(
+        code="600001",
+        preliminary_rank=2,
+    )
+
+    targets = rank_candidates_for_opinion(
+        OpinionTargetSelectionInput(
+            strategy_version="core-strategy-v5-test",
+            market_state="rising",
+            candidates=[limit_up, ordinary],
+            reference_available_cash=100_000,
+        )
+    )
+
+    assert targets == ["600001"]
 
 
 def test_opinion_targets_ignore_opinion_itself_and_exclude_untradeable() -> None:

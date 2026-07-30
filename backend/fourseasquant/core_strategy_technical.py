@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from fourseasquant.technical_scoring import DerivativeState
 
 
-TECHNICAL_SIGNAL_VERSION = "core-technical-v2"
+TECHNICAL_SIGNAL_VERSION = "core-technical-v4"
 PatternDirection = Literal["bullish", "bearish", "neutral"]
 PatternFunction = Literal["reversal", "continuation", "neutral"]
 PatternStrength = Literal["strong", "weak", "neutral"]
@@ -195,6 +195,7 @@ class DailyTechnicalAnalysis(BaseModel):
     strong_bullish_continuation: bool = False
     big_bullish_candle: bool = False
     valid_volume_breakout: bool = False
+    confirmed_pressure_breakout: bool = False
     stop_price: float | None = None
     pressure_target: float | None = None
     gross_reward_risk_ratio: float | None = None
@@ -405,7 +406,15 @@ def analyze_daily_technical(
         metrics,
         resistances,
     )
-    valid_volume_breakout = bool(broken_resistances)
+    valid_volume_breakout = any(
+        _volume_breaks_resistance(
+            resistance,
+            current_close=valid_bars[-1].close,
+            metric=current_metrics,
+        )
+        for resistance in broken_resistances
+    )
+    confirmed_pressure_breakout = bool(broken_resistances)
     for broken_resistance in broken_resistances:
         resistances.remove(broken_resistance)
         converted_sources = list(
@@ -480,6 +489,7 @@ def analyze_daily_technical(
         strong_bullish_continuation=strong_bullish_continuation,
         big_bullish_candle=big_bullish_candle,
         valid_volume_breakout=valid_volume_breakout,
+        confirmed_pressure_breakout=confirmed_pressure_breakout,
         stop_price=stop_price,
         pressure_target=pressure_target,
         gross_reward_risk_ratio=reward_risk,
@@ -1897,8 +1907,6 @@ def _polarity_conversion_candidates(
     for level in candidates:
         for index in range(level.formed_index + 1, len(bars) - 1):
             metric = metrics[index]
-            if not _volume_confirmed(metric):
-                continue
             lower, upper = _level_bounds_at(
                 level,
                 index=index,
@@ -1906,11 +1914,22 @@ def _polarity_conversion_candidates(
             )
             upward_break = (
                 level.role == "resistance"
-                and bars[index].close
-                > upper + 0.10 * cast_float(metric.mr20)
+                and (
+                    _price_breaks_resistance(
+                        lower=lower,
+                        upper=upper,
+                        current_close=bars[index].close,
+                    )
+                    or (
+                        _volume_confirmed(metric)
+                        and bars[index].close
+                        > upper + 0.10 * cast_float(metric.mr20)
+                    )
+                )
             )
             downward_break = (
                 level.role == "support"
+                and _volume_confirmed(metric)
                 and bars[index].close
                 < lower - 0.10 * cast_float(metric.mr20)
             )
@@ -2061,14 +2080,23 @@ def _level_invalidated(
     # 当日突破先保留到分析末尾，供突破判定和压力转支撑使用。
     for index in range(level.formed_index + 1, len(bars) - 1):
         metric = metrics[index]
-        if not _volume_confirmed(metric):
-            continue
-        mr20 = cast(float, metric.mr20)
         lower, upper = _level_bounds_at(
             level,
             index=index,
             current_index=len(bars) - 1,
         )
+        if (
+            level.role == "resistance"
+            and _price_breaks_resistance(
+                lower=lower,
+                upper=upper,
+                current_close=bars[index].close,
+            )
+        ):
+            return True
+        if not _volume_confirmed(metric):
+            continue
+        mr20 = cast(float, metric.mr20)
         if (
             level.role == "support"
             and bars[index].close
@@ -2179,12 +2207,39 @@ def _pressure_target(
     current_close: float,
     resistances: list[TechnicalLevel],
 ) -> float | None:
-    if any(
-        resistance.lower <= current_close
+    higher = [
+        resistance.lower
         for resistance in resistances
-    ):
-        return None
-    return resistances[0].lower if resistances else None
+        if resistance.lower > current_close
+    ]
+    return min(higher) if higher else None
+
+
+def _price_breaks_resistance(
+    *,
+    lower: float,
+    upper: float,
+    current_close: float,
+) -> bool:
+    width = upper - lower
+    return (
+        width > 0
+        and current_close >= upper + 0.5 * width
+    )
+
+
+def _volume_breaks_resistance(
+    resistance: TechnicalLevel,
+    *,
+    current_close: float,
+    metric: _Metrics,
+) -> bool:
+    return (
+        _volume_confirmed(metric)
+        and metric.mr20 is not None
+        and current_close
+        > resistance.upper + 0.10 * metric.mr20
+    )
 
 
 def _broken_resistances(
@@ -2193,20 +2248,23 @@ def _broken_resistances(
     resistances: list[TechnicalLevel],
 ) -> list[TechnicalLevel]:
     metric = metrics[-1]
-    if (
-        not resistances
-        or metric.mr20 is None
-        or metric.volume_ratio is None
-        or metric.turnover_ratio is None
-    ):
-        return []
-    if metric.volume_ratio < 1.5 or metric.turnover_ratio < 1.5:
+    if not resistances:
         return []
     broken = [
         resistance
         for resistance in resistances
-        if bars[-1].close
-        > resistance.upper + 0.10 * metric.mr20
+        if (
+            _volume_breaks_resistance(
+                resistance,
+                current_close=bars[-1].close,
+                metric=metric,
+            )
+            or _price_breaks_resistance(
+                lower=resistance.lower,
+                upper=resistance.upper,
+                current_close=bars[-1].close,
+            )
+        )
     ]
     return sorted(
         broken,
