@@ -199,7 +199,7 @@ def test_non_rising_market_skips_investigations_and_keeps_technical_path(
     preparation = prepare_strategy_investigations(
         database,
         requested_date=ACTUAL_DATE,
-        strategy_version="core-strategy-v8-test",
+        strategy_version="core-strategy-v7-test",
         corporate_actions_complete=True,
         portfolio=_portfolio(),
         fundamental_investigations=None,
