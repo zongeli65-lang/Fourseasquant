@@ -634,7 +634,7 @@ def prepare_core_strategy_day(
             strategy_version=strategy_version,
         )
 
-    portfolio, _ = _starting_portfolio(
+    portfolio, positions = _starting_portfolio(
         path,
         account=account,
         before_date=requested_date,
@@ -646,6 +646,7 @@ def prepare_core_strategy_day(
             strategy_version=strategy_version,
             corporate_actions_complete=True,
             portfolio=portfolio,
+            positions=positions,
             fundamental_investigations=None,
             published_at=prepared_at,
         )

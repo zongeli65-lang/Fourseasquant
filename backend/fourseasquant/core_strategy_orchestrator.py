@@ -35,6 +35,7 @@ from fourseasquant.core_strategy_execution import (
     PricePriority,
     plan_new_entries,
     rank_candidates_for_opinion,
+    uses_v4_execution_rules,
 )
 from fourseasquant.core_strategy_positions import (
     HoldingPosition,
@@ -91,6 +92,8 @@ def prepare_strategy_investigations(
     strategy_version: str,
     corporate_actions_complete: bool,
     portfolio: PortfolioForEntry,
+    positions: list[HoldingPosition] | None = None,
+    observations: list[PositionObservation] | None = None,
     fundamental_investigations: Mapping[
         str,
         FundamentalInvestigation,
@@ -111,6 +114,30 @@ def prepare_strategy_investigations(
         requested_date=requested_date,
         corporate_actions_complete=corporate_actions_complete,
     )
+    fee_schedule = fees or FeeSchedule()
+    reference_portfolio = portfolio
+    if (
+        uses_v4_execution_rules(strategy_version)
+        and (positions is not None or not portfolio.held_codes)
+    ):
+        reference_positions = positions or []
+        reference_observations = (
+            observations
+            if observations is not None
+            else load_position_observations(
+                path,
+                daily_inputs=daily,
+                positions=reference_positions,
+            ).observations
+        )
+        _, reference_portfolio = _manage_positions_for_entry(
+            actual_date=daily.actual_date,
+            strategy_version=strategy_version,
+            portfolio=portfolio,
+            positions=reference_positions,
+            observations=reference_observations,
+            fees=fee_schedule,
+        )
     investigations = fundamental_investigations or {}
     preliminary = [
         item.preliminary.model_copy(
@@ -136,14 +163,16 @@ def prepare_strategy_investigations(
     )
     opinion_codes = rank_candidates_for_opinion(
         OpinionTargetSelectionInput(
+            strategy_version=strategy_version,
             market_state=daily.market_state,
             candidates=provisional,
-            held_codes=portfolio.held_codes,
+            held_codes=reference_portfolio.held_codes,
             reference_full_position_slot=(
-                portfolio.net_asset_value
-                / _maximum_positions(portfolio.initial_capital)
+                reference_portfolio.net_asset_value
+                / _maximum_positions(reference_portfolio.initial_capital)
             ),
-            fees=fees or FeeSchedule(),
+            reference_available_cash=reference_portfolio.available_cash,
+            fees=fee_schedule,
         )
     )
     with open_database_connection(path) as connection:
@@ -214,37 +243,21 @@ def finalize_strategy_day(
             positions=positions,
         ).observations
     )
-    position_decision = manage_positions(
-        PositionManagementInput(
-            actual_date=daily.actual_date,
-            strategy_version=strategy_version,
-            corporate_actions_complete=True,
-            positions=positions,
-            observations=position_observations,
-            fees=fee_schedule,
-        )
+    position_decision, entry_portfolio = _manage_positions_for_entry(
+        actual_date=daily.actual_date,
+        strategy_version=strategy_version,
+        portfolio=portfolio,
+        positions=positions,
+        observations=position_observations,
+        fees=fee_schedule,
     )
-    cash_after_exits = round(
-        portfolio.available_cash
-        + sum(order.net_cash for order in position_decision.orders),
-        2,
-    )
-    surviving_codes = [
-        position.code
-        for position in position_decision.positions
-    ]
     entry_decision = plan_new_entries(
         EntryPlanningInput(
             actual_date=daily.actual_date,
             strategy_version=strategy_version,
             market_state=daily.market_state,
             market_data_complete=daily.market_data_complete,
-            portfolio=portfolio.model_copy(
-                update={
-                    "available_cash": cash_after_exits,
-                    "held_codes": surviving_codes,
-                }
-            ),
+            portfolio=entry_portfolio,
             candidates=_entry_candidates(
                 daily,
                 pipeline=preparation.candidate_pipeline,
@@ -300,6 +313,73 @@ def finalize_strategy_day(
         portfolio_publication_status=portfolio_publication_status,
         portfolio=published_portfolio,
         portfolio_publication_blocked_codes=missing_mark_codes,
+    )
+
+
+def _manage_positions_for_entry(
+    *,
+    actual_date: date,
+    strategy_version: str,
+    portfolio: PortfolioForEntry,
+    positions: list[HoldingPosition],
+    observations: list[PositionObservation],
+    fees: FeeSchedule,
+) -> tuple[PositionManagementDecision, PortfolioForEntry]:
+    position_decision = manage_positions(
+        PositionManagementInput(
+            actual_date=actual_date,
+            strategy_version=strategy_version,
+            corporate_actions_complete=True,
+            positions=positions,
+            observations=observations,
+            fees=fees,
+        )
+    )
+    cash_after_exits = round(
+        portfolio.available_cash
+        + sum(order.net_cash for order in position_decision.orders),
+        2,
+    )
+    update: dict[str, object] = {
+        "available_cash": cash_after_exits,
+        "held_codes": [
+            position.code for position in position_decision.positions
+        ],
+    }
+    if uses_v4_execution_rules(strategy_version):
+        same_day_net_asset_value = _marked_net_asset_value(
+            available_cash=cash_after_exits,
+            positions=position_decision.positions,
+            observations=observations,
+        )
+        if same_day_net_asset_value is not None:
+            update["net_asset_value"] = same_day_net_asset_value
+    return position_decision, portfolio.model_copy(update=update)
+
+
+def _marked_net_asset_value(
+    *,
+    available_cash: float,
+    positions: list[HoldingPosition],
+    observations: list[PositionObservation],
+) -> float | None:
+    observation_by_code = {
+        observation.code: observation
+        for observation in observations
+    }
+    if any(
+        position.code not in observation_by_code
+        for position in positions
+    ):
+        return None
+    return round(
+        available_cash
+        + sum(
+            position.shares
+            * observation_by_code[position.code].close
+            for position in positions
+        ),
+        2,
     )
 
 

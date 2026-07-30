@@ -317,6 +317,18 @@ def test_strategy_versions_coexist_until_v2_portfolio_is_complete(
     )
 
 
+def test_legacy_strategy_day_defaults_missing_market_factor_to_one() -> None:
+    payload = _day_snapshot(
+        version="core-strategy-v3"
+    ).model_dump(mode="json")
+    del payload["entry_planning"]["market_position_factor"]
+
+    restored = CoreStrategyDaySnapshot.model_validate(payload)
+
+    assert restored.strategy_version == "core-strategy-v3"
+    assert restored.entry_planning.market_position_factor == 1.0
+
+
 def test_portfolio_requires_complete_and_balanced_marks() -> None:
     with pytest.raises(ValidationError, match="每只持仓"):
         CoreStrategyPortfolioSnapshot(

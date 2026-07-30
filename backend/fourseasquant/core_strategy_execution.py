@@ -7,6 +7,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, Field, model_validator
 
 from fourseasquant.core_strategy import (
+    CORE_STRATEGY_VERSION,
     CandidateRoute,
     FundamentalPriority,
     OpportunityGrade,
@@ -36,6 +37,11 @@ _POSITION_FRACTION: dict[OpportunityGrade, float] = {
     "B": 0.5,
     "A": 0.75,
     "S": 1,
+}
+_MARKET_POSITION_FACTOR: dict[MarketState, float] = {
+    "rising": 1.0,
+    "sideways": 0.5,
+    "falling": 0.2,
 }
 
 
@@ -161,18 +167,33 @@ class EntryPlanningDecision(BaseModel):
     strategy_version: str
     maximum_positions: int
     full_position_slot: float
+    market_position_factor: float = Field(default=1, gt=0, le=1)
     candidates: list[EntryCandidateDecision]
     orders: list[SimulatedBuyOrder]
     remaining_cash: float
+
+    @model_validator(mode="after")
+    def validate_market_position_factor_version(self) -> Self:
+        if (
+            uses_v4_execution_rules(self.strategy_version)
+            and "market_position_factor" not in self.model_fields_set
+        ):
+            raise ValueError("v4 及后续策略日必须显式记录市场仓位系数")
+        return self
 
 
 class OpinionTargetSelectionInput(BaseModel):
     """不使用舆论自身结果的每日调查目标排序输入。"""
 
+    strategy_version: str = Field(
+        default=CORE_STRATEGY_VERSION,
+        min_length=1,
+    )
     market_state: MarketState
     candidates: list[EntryCandidate]
     held_codes: list[str] = Field(default_factory=list)
     reference_full_position_slot: float = Field(default=10_000, gt=0)
+    reference_available_cash: float | None = Field(default=None, ge=0)
     fees: FeeSchedule = Field(default_factory=FeeSchedule)
     limit: int = Field(default=10, ge=0, le=10)
 
@@ -192,6 +213,7 @@ def rank_candidates_for_opinion(
             update={
                 "favorable_opinion": False,
                 "negative_opinion": False,
+                "opinion_targeted": True,
             }
         )
         for candidate in source.candidates
@@ -199,13 +221,33 @@ def rank_candidates_for_opinion(
         and not candidate.suspended
         and not candidate.at_limit_down
     ]
+    if (
+        uses_v4_execution_rules(source.strategy_version)
+        and source.reference_available_cash is not None
+    ):
+        return _rank_opinion_candidates_with_cash(
+            source,
+            candidates=candidates,
+            held_codes=held_codes,
+        )
     decisions = {
         candidate.code: _evaluate_entry_candidate(
             candidate,
+            strategy_version=source.strategy_version,
             market_state=source.market_state,
             market_data_complete=True,
             held_codes=held_codes,
             full_position_slot=source.reference_full_position_slot,
+            maximum_affordable_shares=(
+                _maximum_affordable_lot(
+                    source.reference_available_cash,
+                    price=candidate.close,
+                    fees=source.fees,
+                )
+                if source.reference_available_cash is not None
+                and uses_v4_execution_rules(source.strategy_version)
+                else None
+            ),
             fees=source.fees,
         )
         for candidate in candidates
@@ -223,6 +265,82 @@ def rank_candidates_for_opinion(
     ]
 
 
+def _rank_opinion_candidates_with_cash(
+    source: OpinionTargetSelectionInput,
+    *,
+    candidates: list[EntryCandidate],
+    held_codes: set[str],
+) -> list[str]:
+    remaining_cash = source.reference_available_cash
+    assert remaining_cash is not None
+    pending = list(candidates)
+    ranked_codes: list[str] = []
+    cash_committed = False
+    while pending and len(ranked_codes) < source.limit:
+        maximum_shares = {
+            candidate.code: _maximum_affordable_lot(
+                remaining_cash,
+                price=candidate.close,
+                fees=source.fees,
+            )
+            for candidate in pending
+        }
+        decisions = {
+            candidate.code: _evaluate_entry_candidate(
+                candidate,
+                strategy_version=source.strategy_version,
+                market_state=source.market_state,
+                market_data_complete=True,
+                held_codes=held_codes,
+                full_position_slot=source.reference_full_position_slot,
+                maximum_affordable_shares=maximum_shares[
+                    candidate.code
+                ],
+                fees=source.fees,
+            )
+            for candidate in pending
+        }
+        pending.sort(
+            key=lambda candidate: _candidate_sort_key(
+                candidate,
+                decision=decisions[candidate.code],
+                market_state=source.market_state,
+            )
+        )
+        candidate = pending.pop(0)
+        decision = decisions[candidate.code]
+        ranked_codes.append(candidate.code)
+        if cash_committed or not decision.open_allowed:
+            continue
+        target_shares = _round_down_lot(
+            (
+                source.reference_full_position_slot
+                * decision.position_fraction
+            )
+            / candidate.close
+        )
+        shares = min(
+            target_shares,
+            maximum_shares[candidate.code],
+        )
+        if shares < 100:
+            continue
+        target_cost = _buy_cost(
+            target_shares,
+            candidate.close,
+            source.fees,
+        )
+        actual_cost = _buy_cost(
+            shares,
+            candidate.close,
+            source.fees,
+        )
+        remaining_cash = round(remaining_cash - actual_cost, 2)
+        if target_cost > actual_cost:
+            cash_committed = True
+    return ranked_codes
+
+
 def plan_new_entries(source: EntryPlanningInput) -> EntryPlanningDecision:
     """
     评级、排序并生成一次性分歧买入订单。
@@ -238,6 +356,7 @@ def plan_new_entries(source: EntryPlanningInput) -> EntryPlanningDecision:
     decisions = [
         _evaluate_entry_candidate(
             candidate,
+            strategy_version=source.strategy_version,
             market_state=source.market_state,
             market_data_complete=source.market_data_complete,
             held_codes=held_codes,
@@ -265,7 +384,34 @@ def plan_new_entries(source: EntryPlanningInput) -> EntryPlanningDecision:
     remaining_cash = source.portfolio.available_cash
     orders: list[SimulatedBuyOrder] = []
     cash_committed = False
-    for candidate in eligible:
+    pending = list(eligible)
+    while pending:
+        if uses_v4_execution_rules(source.strategy_version):
+            for pending_candidate in pending:
+                decision_by_code[pending_candidate.code] = (
+                    _evaluate_entry_candidate(
+                        pending_candidate,
+                        strategy_version=source.strategy_version,
+                        market_state=source.market_state,
+                        market_data_complete=source.market_data_complete,
+                        held_codes=held_codes,
+                        full_position_slot=full_position_slot,
+                        maximum_affordable_shares=_maximum_affordable_lot(
+                            remaining_cash,
+                            price=pending_candidate.close,
+                            fees=source.fees,
+                        ),
+                        fees=source.fees,
+                    )
+                )
+            pending.sort(
+                key=lambda pending_candidate: _candidate_sort_key(
+                    pending_candidate,
+                    decision=decision_by_code[pending_candidate.code],
+                    market_state=source.market_state,
+                )
+            )
+        candidate = pending.pop(0)
         decision = decision_by_code[candidate.code]
         if cash_committed:
             _block(decision, "cash_committed_to_higher_priority")
@@ -325,6 +471,10 @@ def plan_new_entries(source: EntryPlanningInput) -> EntryPlanningDecision:
         strategy_version=source.strategy_version,
         maximum_positions=maximum_positions,
         full_position_slot=full_position_slot,
+        market_position_factor=_market_position_factor(
+            source.market_state,
+            strategy_version=source.strategy_version,
+        ),
         candidates=ordered_decisions,
         orders=orders,
         remaining_cash=remaining_cash,
@@ -334,10 +484,12 @@ def plan_new_entries(source: EntryPlanningInput) -> EntryPlanningDecision:
 def _evaluate_entry_candidate(
     candidate: EntryCandidate,
     *,
+    strategy_version: str,
     market_state: MarketState,
     market_data_complete: bool,
     held_codes: set[str],
     full_position_slot: float,
+    maximum_affordable_shares: int | None = None,
     fees: FeeSchedule,
 ) -> EntryCandidateDecision:
     strong_bonus = min(len(candidate.strong_evidence_ids), 2)
@@ -357,6 +509,9 @@ def _evaluate_entry_candidate(
         candidate,
         base_points=base_points,
         full_position_slot=full_position_slot,
+        market_state=market_state,
+        strategy_version=strategy_version,
+        maximum_affordable_shares=maximum_affordable_shares,
         fees=fees,
     )
     opinion_bonus = 1 if candidate.favorable_opinion else 0
@@ -368,7 +523,12 @@ def _evaluate_entry_candidate(
     grade_points = min(raw_points, 3)
     grade = _POINTS_GRADE.get(grade_points)
     position_fraction = (
-        _position_fraction(grade, candidate.support_source_count)
+        _effective_position_fraction(
+            grade,
+            candidate.support_source_count,
+            market_state=market_state,
+            strategy_version=strategy_version,
+        )
         if grade is not None
         else 0
     )
@@ -474,6 +634,9 @@ def _resolved_reward_risk(
     *,
     base_points: int,
     full_position_slot: float,
+    market_state: MarketState,
+    strategy_version: str,
+    maximum_affordable_shares: int | None,
     fees: FeeSchedule,
 ) -> tuple[float | None, int]:
     if candidate.net_reward_risk_ratio is not None:
@@ -486,13 +649,16 @@ def _resolved_reward_risk(
         grade = _POINTS_GRADE.get(min(base_points + bonus, 3))
         if grade is None:
             return None, 0
-        fraction = _position_fraction(
+        fraction = _effective_position_fraction(
             grade,
             candidate.support_source_count,
+            market_state=market_state,
+            strategy_version=strategy_version,
         )
         projected_value = _projected_net_reward_risk(
             candidate,
             target_notional=full_position_slot * fraction,
+            maximum_affordable_shares=maximum_affordable_shares,
             fees=fees,
         )
         next_bonus = _reward_risk_bonus(projected_value)
@@ -508,6 +674,7 @@ def _projected_net_reward_risk(
     candidate: EntryCandidate,
     *,
     target_notional: float,
+    maximum_affordable_shares: int | None = None,
     fees: FeeSchedule,
 ) -> float | None:
     if (
@@ -518,6 +685,8 @@ def _projected_net_reward_risk(
     ):
         return None
     shares = _round_down_lot(target_notional / candidate.close)
+    if maximum_affordable_shares is not None:
+        shares = min(shares, maximum_affordable_shares)
     if shares < 100:
         return None
     entry_cash = _buy_cost(shares, candidate.close, fees)
@@ -566,6 +735,44 @@ def _position_fraction(
         else 0
     )
     return min(1, _POSITION_FRACTION[grade] + support_bonus)
+
+
+def _market_position_factor(
+    market_state: MarketState,
+    *,
+    strategy_version: str,
+) -> float:
+    if not uses_v4_execution_rules(strategy_version):
+        return 1.0
+    return _MARKET_POSITION_FACTOR[market_state]
+
+
+def uses_v4_execution_rules(strategy_version: str) -> bool:
+    prefix = "core-strategy-v"
+    if not strategy_version.startswith(prefix):
+        return False
+    version_text = strategy_version.removeprefix(prefix)
+    version_number_text = version_text.split("-", 1)[0]
+    if not version_number_text.isdigit():
+        return False
+    version_number = int(version_number_text)
+    return version_number >= 4
+
+
+def _effective_position_fraction(
+    grade: OpportunityGrade,
+    support_source_count: int,
+    *,
+    market_state: MarketState,
+    strategy_version: str,
+) -> float:
+    return (
+        _position_fraction(grade, support_source_count)
+        * _market_position_factor(
+            market_state,
+            strategy_version=strategy_version,
+        )
+    )
 
 
 def _maximum_positions(initial_capital: float) -> int:

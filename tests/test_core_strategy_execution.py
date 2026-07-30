@@ -1,8 +1,13 @@
 from datetime import date
 
 import pytest
+from pydantic import ValidationError
 
-from fourseasquant.core_strategy import CandidateRoute, FundamentalPriority
+from fourseasquant.core_strategy import (
+    CORE_STRATEGY_VERSION,
+    CandidateRoute,
+    FundamentalPriority,
+)
 from fourseasquant.core_strategy_execution import (
     BaseOpportunityGrade,
     EntryCandidate,
@@ -41,6 +46,8 @@ def _candidate(
     price_priority: PricePriority = "normal",
     support_source_count: int = 1,
     close: float = 10,
+    stop_price: float | None = None,
+    pressure_target: float | None = None,
     suspended: bool = False,
     at_limit_down: bool = False,
 ) -> EntryCandidate:
@@ -67,8 +74,16 @@ def _candidate(
         price_priority=price_priority,
         support_source_count=support_source_count,
         close=close,
-        stop_price=max(0.01, round(close * 0.8, 2)),
-        pressure_target=round(close * 1.4, 2),
+        stop_price=(
+            max(0.01, round(close * 0.8, 2))
+            if stop_price is None
+            else stop_price
+        ),
+        pressure_target=(
+            round(close * 1.4, 2)
+            if pressure_target is None
+            else pressure_target
+        ),
         suspended=suspended,
         at_limit_down=at_limit_down,
     )
@@ -83,11 +98,12 @@ def _plan(
     available_cash: float = 40_000,
     held_codes: list[str] | None = None,
     fees: FeeSchedule | None = None,
+    strategy_version: str = CORE_STRATEGY_VERSION,
 ) -> EntryPlanningDecision:
     return plan_new_entries(
         EntryPlanningInput(
             actual_date=TARGET_DATE,
-            strategy_version="core-strategy-v1",
+            strategy_version=strategy_version,
             market_state=market_state,
             market_data_complete=market_data_complete,
             portfolio=PortfolioForEntry(
@@ -249,6 +265,158 @@ def test_grade_maps_to_one_time_target_position(
     assert item.position_fraction == expected_fraction
 
 
+@pytest.mark.parametrize(
+    ("market_state", "expected_factor", "expected_fraction"),
+    [
+        ("rising", 1.0, 1.0),
+        ("sideways", 0.5, 0.5),
+        ("falling", 0.2, 0.2),
+    ],
+)
+def test_market_state_scales_s_grade_position_without_changing_grade(
+    market_state: MarketState,
+    expected_factor: float,
+    expected_fraction: float,
+) -> None:
+    candidate = _candidate(
+        route=(
+            "technical_mainline"
+            if market_state == "rising"
+            else "pure_technical"
+        ),
+        strong_evidence_ids=["strong-candle", "strong-rsi"],
+    )
+
+    decision = _plan(candidate, market_state=market_state)
+
+    assert decision.market_position_factor == expected_factor
+    assert decision.candidates[0].grade == "S"
+    assert decision.candidates[0].position_fraction == expected_fraction
+    assert decision.orders[0].position_fraction == expected_fraction
+
+
+def test_v3_replay_keeps_pre_market_scaling_position_semantics() -> None:
+    candidate = _candidate(
+        route="pure_technical",
+        strong_evidence_ids=["strong-candle", "strong-rsi"],
+    )
+
+    decision = _plan(
+        candidate,
+        market_state="sideways",
+        strategy_version="core-strategy-v3",
+    )
+
+    assert decision.market_position_factor == 1.0
+    assert decision.candidates[0].position_fraction == 1.0
+    assert decision.orders[0].position_fraction == 1.0
+
+
+def test_v4_snapshot_rejects_a_missing_market_position_factor() -> None:
+    with pytest.raises(ValidationError, match="必须显式记录"):
+        EntryPlanningDecision(
+            actual_date=TARGET_DATE,
+            strategy_version="core-strategy-v4",
+            maximum_positions=1,
+            full_position_slot=40_000,
+            candidates=[],
+            orders=[],
+            remaining_cash=40_000,
+        )
+
+
+def test_market_factor_applies_after_merged_support_bonus() -> None:
+    two_sources = _candidate(
+        code="600000",
+        route="pure_technical",
+        support_source_count=2,
+    )
+    three_sources = _candidate(
+        code="600001",
+        route="pure_technical",
+        support_source_count=3,
+        preliminary_rank=2,
+    )
+
+    decision = _plan(
+        two_sources,
+        three_sources,
+        market_state="sideways",
+        initial_capital=100_000,
+        net_asset_value=100_000,
+        available_cash=100_000,
+    )
+
+    assert [item.grade for item in decision.candidates] == ["B", "B"]
+    assert [item.position_fraction for item in decision.candidates] == [
+        0.3,
+        0.35,
+    ]
+
+
+def test_net_reward_risk_uses_market_adjusted_order_size() -> None:
+    candidate = _candidate(
+        route="pure_technical",
+        base_grade="C",
+        net_reward_risk_ratio=None,
+        close=10,
+    )
+
+    decision = _plan(candidate, market_state="sideways")
+
+    assert decision.candidates[0].grade == "C"
+    assert decision.orders[0].shares == 500
+    entry_cash = 5_005.05
+    stop_cash = 3_992.96
+    target_cash = 6_991.43
+    assert decision.candidates[0].net_reward_risk_ratio == pytest.approx(
+        (target_cash - entry_cash) / (entry_cash - stop_cash)
+    )
+
+
+@pytest.mark.parametrize(
+    ("market_state", "expected_factor"),
+    [
+        ("rising", 1.0),
+        ("sideways", 0.5),
+        ("falling", 0.2),
+    ],
+)
+def test_market_state_caps_aggregate_new_position_notional(
+    market_state: MarketState,
+    expected_factor: float,
+) -> None:
+    candidates = [
+        _candidate(
+            f"{600000 + index:06d}",
+            route=(
+                "technical_mainline"
+                if market_state == "rising"
+                else "pure_technical"
+            ),
+            strong_evidence_ids=["strong-candle", "strong-rsi"],
+            preliminary_rank=index + 1,
+            close=10,
+        )
+        for index in range(5)
+    ]
+
+    decision = _plan(
+        *candidates,
+        market_state=market_state,
+        initial_capital=200_000,
+        net_asset_value=200_000,
+        available_cash=200_000,
+    )
+
+    assert len(decision.orders) == 5
+    assert sum(order.notional for order in decision.orders) <= (
+        decision.full_position_slot
+        * decision.maximum_positions
+        * expected_factor
+    )
+
+
 def test_merged_strong_support_only_increases_initial_position_fraction() -> None:
     two_sources = _candidate(
         code="600000",
@@ -315,6 +483,139 @@ def test_cash_shortfall_uses_all_affordable_cash_for_highest_priority() -> None:
     assert [order.code for order in decision.orders] == ["600000"]
     assert decision.orders[0].shares == 1_100
     assert decision.remaining_cash < 1_000
+
+
+def test_v4_cash_shortfall_rr_uses_actual_affordable_shares() -> None:
+    candidate = _candidate(
+        base_grade="B",
+        close=10,
+        stop_price=9.95,
+        pressure_target=10.14,
+    )
+
+    decision = _plan(
+        candidate,
+        initial_capital=40_000,
+        net_asset_value=40_000,
+        available_cash=4_000,
+    )
+
+    item = decision.candidates[0]
+    order = decision.orders[0]
+    assert order.shares == 300
+    assert item.net_reward_risk_ratio == pytest.approx(
+        1.1456078275557395
+    )
+    assert item.reward_risk_bonus == 0
+    assert item.grade == "B"
+
+
+def test_v4_recalculates_later_candidate_after_previous_order() -> None:
+    first = _candidate(
+        code="600000",
+        base_grade="B",
+        strong_evidence_ids=["strong-candle", "strong-rsi"],
+        net_reward_risk_ratio=0,
+        close=10,
+    )
+    second = _candidate(
+        code="600001",
+        base_grade="B",
+        preliminary_rank=2,
+        close=10,
+        stop_price=9.95,
+        pressure_target=10.14,
+    )
+
+    decision = _plan(
+        first,
+        second,
+        initial_capital=100_000,
+        net_asset_value=100_000,
+        available_cash=40_000,
+    )
+
+    assert [order.code for order in decision.orders] == [
+        "600000",
+        "600001",
+    ]
+    assert decision.orders[1].shares == 600
+    second_decision = decision.candidates[1]
+    assert second_decision.net_reward_risk_ratio == pytest.approx(
+        1.6433743884077456
+    )
+    assert second_decision.reward_risk_bonus == 0
+    assert second_decision.grade == "B"
+
+
+def test_v4_reorders_remaining_candidates_after_cash_changes() -> None:
+    first = _candidate(
+        code="600000",
+        base_grade="B",
+        strong_evidence_ids=["strong-candle", "strong-rsi"],
+        net_reward_risk_ratio=0,
+        close=10,
+    )
+    cash_sensitive = _candidate(
+        code="600001",
+        base_grade="B",
+        preliminary_rank=2,
+        close=10,
+        stop_price=9.95,
+        pressure_target=10.14,
+    )
+    stable = _candidate(
+        code="600002",
+        base_grade="B",
+        preliminary_rank=3,
+        net_reward_risk_ratio=0,
+        fundamental_priority="preferred",
+        close=10,
+    )
+
+    decision = _plan(
+        first,
+        cash_sensitive,
+        stable,
+        initial_capital=100_000,
+        net_asset_value=100_000,
+        available_cash=40_000,
+    )
+
+    assert [order.code for order in decision.orders] == [
+        "600000",
+        "600002",
+    ]
+    sensitive_decision = decision.candidates[1]
+    assert sensitive_decision.grade == "B"
+    assert "cash_committed_to_higher_priority" in (
+        sensitive_decision.block_reasons
+    )
+
+
+def test_v3_cash_shortfall_keeps_legacy_reward_risk_semantics() -> None:
+    candidate = _candidate(
+        base_grade="B",
+        close=10,
+        stop_price=9.95,
+        pressure_target=10.14,
+    )
+
+    decision = _plan(
+        candidate,
+        initial_capital=40_000,
+        net_asset_value=40_000,
+        available_cash=4_000,
+        strategy_version="core-strategy-v3",
+    )
+
+    item = decision.candidates[0]
+    assert decision.orders[0].shares == 300
+    assert item.net_reward_risk_ratio == pytest.approx(
+        2.155739503340945
+    )
+    assert item.reward_risk_bonus == 1
+    assert item.grade == "A"
 
 
 def test_too_expensive_candidate_is_skipped_for_cheaper_candidate() -> None:
@@ -422,3 +723,84 @@ def test_opinion_targets_ignore_opinion_itself_and_exclude_untradeable() -> None
     )
 
     assert codes == ["600001", "600002"]
+
+
+def test_v4_opinion_targets_use_the_same_available_cash_as_entry_ranking() -> None:
+    cash_sensitive = [
+        _candidate(
+            code=f"{600000 + index:06d}",
+            base_grade="B",
+            preliminary_rank=index + 1,
+            close=10,
+            stop_price=9.95,
+            pressure_target=10.14,
+        )
+        for index in range(10)
+    ]
+    stable = _candidate(
+        code="600010",
+        base_grade="B",
+        preliminary_rank=11,
+        net_reward_risk_ratio=0,
+        fundamental_priority="preferred",
+        close=10,
+    )
+
+    codes = rank_candidates_for_opinion(
+        OpinionTargetSelectionInput(
+            strategy_version=CORE_STRATEGY_VERSION,
+            market_state="rising",
+            candidates=[*cash_sensitive, stable],
+            reference_full_position_slot=40_000,
+            reference_available_cash=4_000,
+        )
+    )
+
+    assert codes[0] == "600010"
+    assert len(codes) == 10
+
+
+def test_v4_opinion_targets_follow_each_new_orders_remaining_cash() -> None:
+    first = _candidate(
+        code="600000",
+        base_grade="B",
+        preliminary_rank=1,
+        strong_evidence_ids=["strong-candle", "strong-rsi"],
+        close=10,
+        stop_price=8,
+        pressure_target=12,
+    )
+    cash_sensitive = [
+        _candidate(
+            code=f"{600001 + index:06d}",
+            base_grade="B",
+            preliminary_rank=index + 2,
+            close=10,
+            stop_price=9.95,
+            pressure_target=10.14,
+        )
+        for index in range(9)
+    ]
+    later_priority = _candidate(
+        code="600010",
+        base_grade="B",
+        preliminary_rank=11,
+        net_reward_risk_ratio=None,
+        fundamental_priority="preferred",
+        close=10,
+        stop_price=8,
+        pressure_target=12,
+    )
+
+    codes = rank_candidates_for_opinion(
+        OpinionTargetSelectionInput(
+            strategy_version=CORE_STRATEGY_VERSION,
+            market_state="rising",
+            candidates=[first, *cash_sensitive, later_priority],
+            reference_full_position_slot=100_000 / 3,
+            reference_available_cash=40_000,
+        )
+    )
+
+    assert codes[:2] == ["600000", "600010"]
+    assert len(codes) == 10

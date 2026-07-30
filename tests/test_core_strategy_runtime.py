@@ -89,9 +89,13 @@ def test_runtime_prepares_idempotently_then_finalizes_empty_portfolio(
     preparation_calls = 0
     schedule_calls: list[date] = []
 
-    def fake_prepare(*_: object, **__: object) -> StrategyInvestigationPreparation:
+    def fake_prepare(
+        *_: object,
+        **kwargs: object,
+    ) -> StrategyInvestigationPreparation:
         nonlocal preparation_calls
         preparation_calls += 1
+        assert kwargs["positions"] == []
         return _preparation()
 
     def fake_schedule(*_: object, **kwargs: object) -> list[object]:
