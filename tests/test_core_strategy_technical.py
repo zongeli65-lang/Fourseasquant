@@ -57,6 +57,57 @@ def _baseline(size: int = 60) -> list[DailyTechnicalBar]:
     return bars
 
 
+def _random_walk(
+    *,
+    seed: int,
+    size: int,
+    force_last_breakout: bool = False,
+) -> list[DailyTechnicalBar]:
+    rng = Random(seed)
+    price = 100.0
+    bars: list[DailyTechnicalBar] = []
+    for index in range(size):
+        step = rng.uniform(-2.5, 2.5)
+        if index % 17 == 0 and index > 0:
+            step += rng.choice([-4.0, 4.0])
+        open_price = max(5.0, price + rng.uniform(-0.8, 0.8))
+        close = max(5.0, open_price + step)
+        high = max(open_price, close) + rng.uniform(0.2, 1.5)
+        low = max(
+            1.0,
+            min(open_price, close) - rng.uniform(0.2, 1.5),
+        )
+        volume = 1_000 + rng.randrange(0, 800)
+        turnover_cny = 10_000 + rng.randrange(0, 8_000)
+        if force_last_breakout and index == size - 1:
+            close = max(open_price, price + rng.uniform(3, 8))
+            high = close + rng.uniform(0.2, 1.0)
+            low = min(open_price, close) - rng.uniform(0.2, 1.0)
+            volume = 10_000
+            turnover_cny = 100_000
+        derivative_state: DerivativeState = (
+            "positive"
+            if close > price + 0.3
+            else "negative"
+            if close < price - 0.3
+            else "zero"
+        )
+        bars.append(
+            _bar(
+                index,
+                open_price=open_price,
+                high=high,
+                low=low,
+                close=close,
+                volume=volume,
+                turnover_cny=turnover_cny,
+                derivative_state=derivative_state,
+            )
+        )
+        price = close
+    return bars
+
+
 def _analyze(
     bars: list[DailyTechnicalBar],
     *,
@@ -759,40 +810,7 @@ def test_historical_volume_break_converts_resistance_to_support() -> None:
 
 
 def test_nearest_active_levels_drive_stop_and_pressure_target() -> None:
-    rng = Random(4)
-    price = 100.0
-    bars: list[DailyTechnicalBar] = []
-    for index in range(90):
-        step = rng.uniform(-2.5, 2.5)
-        if index % 17 == 0 and index > 0:
-            step += rng.choice([-4.0, 4.0])
-        open_price = max(5.0, price + rng.uniform(-0.8, 0.8))
-        close = max(5.0, open_price + step)
-        high = max(open_price, close) + rng.uniform(0.2, 1.5)
-        low = max(
-            1.0,
-            min(open_price, close) - rng.uniform(0.2, 1.5),
-        )
-        derivative_state: DerivativeState = (
-            "positive"
-            if close > price + 0.3
-            else "negative"
-            if close < price - 0.3
-            else "zero"
-        )
-        bars.append(
-            _bar(
-                index,
-                open_price=open_price,
-                high=high,
-                low=low,
-                close=close,
-                volume=1_000 + rng.randrange(0, 800),
-                turnover_cny=10_000 + rng.randrange(0, 8_000),
-                derivative_state=derivative_state,
-            )
-        )
-        price = close
+    bars = _random_walk(seed=11, size=90)
 
     analysis = _analyze(bars)
     current_close = bars[-1].close
@@ -817,3 +835,69 @@ def test_nearest_active_levels_drive_stop_and_pressure_target() -> None:
     assert analysis.pressure_target == min(
         level.lower for level in active_resistances
     )
+
+
+def test_support_containing_current_price_has_zero_distance() -> None:
+    bars = _random_walk(seed=41, size=90)
+
+    analysis = _analyze(bars)
+    current_close = bars[-1].close
+
+    assert any(
+        level.lower <= current_close <= level.upper
+        for level in analysis.supports
+    )
+    assert (
+        analysis.supports[0].lower
+        <= current_close
+        <= analysis.supports[0].upper
+    )
+    assert analysis.mr20 is not None
+    assert analysis.stop_price == pytest.approx(
+        analysis.supports[0].lower - 0.10 * analysis.mr20
+    )
+
+
+def test_unresolved_pressure_zone_blocks_farther_target() -> None:
+    bars = _random_walk(seed=1, size=90)
+
+    analysis = _analyze(bars)
+    current_close = bars[-1].close
+
+    assert any(
+        level.lower <= current_close <= level.upper
+        for level in analysis.resistances
+    )
+    assert any(
+        level.lower > current_close
+        for level in analysis.resistances
+    )
+    assert analysis.valid_volume_breakout is False
+    assert analysis.pressure_target is None
+
+
+def test_converted_support_is_resorted_by_price_distance() -> None:
+    bars = _random_walk(
+        seed=0,
+        size=100,
+        force_last_breakout=True,
+    )
+
+    analysis = _analyze(bars)
+    nearest = min(
+        analysis.supports,
+        key=lambda level: abs(bars[-1].close - level.upper),
+    )
+
+    assert analysis.valid_volume_breakout is True
+    assert analysis.supports[0] == nearest
+    assert analysis.mr20 is not None
+    assert analysis.stop_price == pytest.approx(
+        nearest.lower - 0.10 * analysis.mr20
+    )
+    assert all(
+        bars[-1].close
+        <= resistance.upper + 0.10 * analysis.mr20
+        for resistance in analysis.resistances
+    )
+    assert analysis.rules_version == "core-technical-v2"

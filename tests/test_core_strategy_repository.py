@@ -246,6 +246,77 @@ def test_complete_portfolio_round_trips_after_strategy_day(
     assert stored.snapshot.positions[0].code == "600000"
 
 
+def test_strategy_versions_coexist_until_v2_portfolio_is_complete(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "strategy.db"
+    v1_time = datetime(2026, 7, 29, 19, tzinfo=BEIJING)
+    v2_time = datetime(2026, 7, 29, 20, tzinfo=BEIJING)
+    v1_day = publish_core_strategy_day(
+        database,
+        snapshot=_day_snapshot(version="core-strategy-v1"),
+        published_at=v1_time,
+    )
+    v1_portfolio = publish_core_strategy_portfolio(
+        database,
+        snapshot=_portfolio_snapshot(version="core-strategy-v1"),
+        published_at=v1_time,
+    )
+
+    publish_core_strategy_day(
+        database,
+        snapshot=_day_snapshot(version="core-strategy-v2"),
+        published_at=v2_time,
+    )
+
+    latest_day = read_latest_core_strategy_day(
+        database,
+        as_of_date=ACTUAL_DATE,
+    )
+    incomplete_latest_portfolio = read_latest_core_strategy_portfolio(
+        database,
+        as_of_date=ACTUAL_DATE,
+    )
+    stored_v1_day = read_core_strategy_day(
+        database,
+        actual_date=ACTUAL_DATE,
+        strategy_version="core-strategy-v1",
+    )
+    stored_v1_portfolio = read_core_strategy_portfolio(
+        database,
+        actual_date=ACTUAL_DATE,
+        strategy_version="core-strategy-v1",
+    )
+
+    assert latest_day is not None
+    assert latest_day.snapshot.strategy_version == "core-strategy-v2"
+    assert incomplete_latest_portfolio == v1_portfolio
+    assert stored_v1_day == v1_day
+    assert stored_v1_portfolio == v1_portfolio
+
+    v2_portfolio = publish_core_strategy_portfolio(
+        database,
+        snapshot=_portfolio_snapshot(version="core-strategy-v2"),
+        published_at=v2_time,
+    )
+
+    assert (
+        read_latest_core_strategy_portfolio(
+            database,
+            as_of_date=ACTUAL_DATE,
+        )
+        == v2_portfolio
+    )
+    assert (
+        read_core_strategy_portfolio(
+            database,
+            actual_date=ACTUAL_DATE,
+            strategy_version="core-strategy-v1",
+        )
+        == v1_portfolio
+    )
+
+
 def test_portfolio_requires_complete_and_balanced_marks() -> None:
     with pytest.raises(ValidationError, match="每只持仓"):
         CoreStrategyPortfolioSnapshot(
