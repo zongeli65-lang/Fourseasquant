@@ -204,7 +204,8 @@ def rank_candidates_for_opinion(
     """
     按最终交易排序规则选择舆论目标，但强制移除舆论加减分。
 
-    已持仓、停牌和跌停股票不占用新开仓舆论调查名额。
+    已持仓、停牌和跌停股票不占用新开仓舆论调查名额；
+    v5 及后续版本的收盘封涨停股票同样不占用。
     """
 
     held_codes = set(source.held_codes)
@@ -220,6 +221,10 @@ def rank_candidates_for_opinion(
         if candidate.code not in held_codes
         and not candidate.suspended
         and not candidate.at_limit_down
+        and not _limit_up_buy_blocked(
+            candidate,
+            strategy_version=source.strategy_version,
+        )
     ]
     if (
         uses_v4_execution_rules(source.strategy_version)
@@ -554,6 +559,11 @@ def _evaluate_entry_candidate(
         reasons.append("suspended")
     if candidate.at_limit_down:
         reasons.append("limit_down")
+    if _limit_up_buy_blocked(
+        candidate,
+        strategy_version=strategy_version,
+    ):
+        reasons.append("limit_up")
     if candidate.code in held_codes:
         reasons.append("already_held_no_adding")
 
@@ -748,6 +758,24 @@ def _market_position_factor(
 
 
 def uses_v4_execution_rules(strategy_version: str) -> bool:
+    return _uses_execution_rules_since(
+        strategy_version,
+        minimum_version=4,
+    )
+
+
+def uses_v5_execution_rules(strategy_version: str) -> bool:
+    return _uses_execution_rules_since(
+        strategy_version,
+        minimum_version=5,
+    )
+
+
+def _uses_execution_rules_since(
+    strategy_version: str,
+    *,
+    minimum_version: int,
+) -> bool:
     prefix = "core-strategy-v"
     if not strategy_version.startswith(prefix):
         return False
@@ -756,7 +784,18 @@ def uses_v4_execution_rules(strategy_version: str) -> bool:
     if not version_number_text.isdigit():
         return False
     version_number = int(version_number_text)
-    return version_number >= 4
+    return version_number >= minimum_version
+
+
+def _limit_up_buy_blocked(
+    candidate: EntryCandidate,
+    *,
+    strategy_version: str,
+) -> bool:
+    return (
+        uses_v5_execution_rules(strategy_version)
+        and candidate.price_priority == "limit_up"
+    )
 
 
 def _effective_position_fraction(
