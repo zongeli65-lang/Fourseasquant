@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -175,6 +176,68 @@ def test_one_year_import_resumes_completed_symbols_before_publishing(
         range_start=date(2025, 7, 22),
         range_end=date(2026, 7, 21),
     ) == {"000001", "600000"}
+
+
+def test_incremental_import_fetches_only_target_window(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "incremental.db"
+    initialize_database(database)
+    calls: list[tuple[str, date, date]] = []
+
+    def stock_history(symbol: str, start: date, end: date) -> pd.DataFrame:
+        calls.append((symbol, start, end))
+        return _history()
+
+    target_date = date(2026, 7, 21)
+    summary = _importer(stock_history).import_incremental(
+        path=database,
+        requested_start_date=target_date,
+        requested_end_date=target_date,
+        new_stock_exclusion_days=20,
+    )
+
+    assert summary.range_start == target_date
+    assert summary.range_end == target_date
+    assert summary.completed_symbols == 2
+    assert {symbol for symbol, _, _ in calls} == {"sh600000", "sz000001"}
+    assert {start for _, start, _ in calls} == {
+        target_date - timedelta(days=14)
+    }
+    assert {end for _, _, end in calls} == {target_date}
+    with sqlite3.connect(database) as connection:
+        dates = connection.execute(
+            """
+            SELECT DISTINCT actual_data_date
+            FROM historical_security_facts
+            ORDER BY actual_data_date
+            """
+        ).fetchall()
+    assert dates == [(target_date.isoformat(),)]
+
+
+def test_incremental_import_stops_before_stock_requests_when_upstream_is_stale(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "incremental-stale.db"
+    initialize_database(database)
+    calls: list[str] = []
+
+    def stock_history(symbol: str, start: date, end: date) -> pd.DataFrame:
+        del start, end
+        calls.append(symbol)
+        return _history()
+
+    summary = _importer(stock_history).import_incremental(
+        path=database,
+        requested_start_date=date(2026, 7, 21),
+        requested_end_date=date(2026, 7, 22),
+        new_stock_exclusion_days=20,
+    )
+
+    assert summary.range_end == date(2026, 7, 21)
+    assert summary.completed_symbols == 0
+    assert calls == []
 
 
 def test_technical_universe_includes_chinext_and_star_with_warmup(

@@ -189,6 +189,166 @@ def _assert_no_staging_attempt_rows(path: Path) -> None:
     assert index_count == (0,)
 
 
+def test_refresh_uses_incremental_import_after_initial_publication(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "incremental-refresh.db"
+    initialize_database(database)
+    previous_date = date(2026, 7, 23)
+    target_date = date(2026, 7, 24)
+    previous_qfq_source = "akshare_sina_daily_qfq:2026-07-23"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO candle_dataset_publications (
+                actual_data_date, qfq_source, published_at
+            ) VALUES (?, ?, '2026-07-23T16:30:00+08:00')
+            """,
+            (previous_date.isoformat(), previous_qfq_source),
+        )
+        for source in ("akshare_sina_daily", previous_qfq_source):
+            connection.execute(
+                """
+                INSERT INTO historical_security_facts (
+                    source, actual_data_date, code, name, open, high, low,
+                    close, previous_close, change_pct, volume, turnover_cny,
+                    listing_trading_days
+                ) VALUES (?, ?, '600000', '浦发银行', 10, 11, 9, 10, 9.8, 2.04, 100, 1000, 100)
+                """,
+                (source, previous_date.isoformat()),
+            )
+
+    calls: list[tuple[date, date]] = []
+
+    class IncrementalOnlyImporter:
+        def __init__(self, label: str) -> None:
+            self._label = label
+
+        def import_one_year(self, **_: object) -> HistoryImportSummary:
+            raise AssertionError("已有完整历史时不得重新下载一年数据")
+
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "build_akshare_one_year_history_importer",
+        lambda **_: IncrementalOnlyImporter("raw"),
+    )
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "build_akshare_qfq_history_importer",
+        lambda **_: IncrementalOnlyImporter("qfq"),
+    )
+
+    def fake_incremental_snapshot(
+        *_: object,
+        requested_end_date: date,
+        previous_date: date,
+        **__: object,
+    ) -> tuple[
+        HistoryImportSummary,
+        HistoryImportSummary,
+        set[str],
+        pd.DataFrame,
+    ]:
+        calls.append((previous_date, requested_end_date))
+        summary = HistoryImportSummary(
+            range_start=requested_end_date,
+            range_end=requested_end_date,
+            total_symbols=1,
+            completed_symbols=1,
+            failed_codes=[],
+            published_days=0,
+            listing_dates={"600000": date(1999, 11, 10)},
+        )
+        return (
+            summary,
+            summary,
+            set(),
+            pd.DataFrame(
+                [{"代码": "600000", "名称": "浦发银行", "成交量": 100}]
+            ),
+        )
+
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "_refresh_incremental_snapshot",
+        fake_incremental_snapshot,
+    )
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "_validate_security_daily_fact_coverage",
+        lambda *_, **__: None,
+    )
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "import_index_candles",
+        lambda *_, **__: {},
+    )
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "promote_incremental_candle_date",
+        lambda *_, **__: 1,
+    )
+    monkeypatch.setattr(
+        candle_refresh_module,
+        "latest_candle_publication",
+        lambda *_, **__: target_date,
+    )
+
+    summary = refresh_one_year_candles(
+        database,
+        requested_end_date=target_date,
+        security_daily_fact_snapshot=lambda: pd.DataFrame(
+            [{"代码": "600000", "名称": "浦发银行", "成交量": 100}]
+        ),
+    )
+
+    assert calls == [(previous_date, target_date)]
+    assert summary.actual_data_date == target_date
+
+
+def test_incremental_refresh_detects_corporate_action(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corporate-action.db"
+    initialize_database(database)
+    previous_date = date(2026, 7, 23)
+    with sqlite3.connect(database) as connection:
+        for code, previous_close in (("600000", 10.0), ("000001", 12.0)):
+            connection.execute(
+                """
+                INSERT INTO historical_security_facts (
+                    source, actual_data_date, code, name, open, high, low,
+                    close, previous_close, change_pct, volume, turnover_cny,
+                    listing_trading_days
+                ) VALUES ('akshare_sina_daily', ?, ?, '测试股票', ?, ?, ?, ?, ?, 0, 100, 1000, 100)
+                """,
+                (
+                    previous_date.isoformat(),
+                    code,
+                    previous_close,
+                    previous_close,
+                    previous_close,
+                    previous_close,
+                    previous_close,
+                )
+            )
+
+    changed = candle_refresh_module._potential_factor_change_codes(
+        database,
+        snapshot=pd.DataFrame(
+            [
+                {"代码": "600000", "昨收": 9.5},
+                {"代码": "000001", "昨收": 12.0},
+            ]
+        ),
+        previous_date=previous_date,
+        codes={"600000", "000001"},
+    )
+
+    assert changed == {"600000"}
+
+
 def test_failed_qfq_rerun_keeps_last_successful_candle_series(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

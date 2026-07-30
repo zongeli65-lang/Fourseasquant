@@ -89,6 +89,11 @@ class AkshareOneYearHistoryImporter:
         self._max_attempts = max(1, max_attempts)
         self._progress_callback = progress_callback
 
+    def eligible_listings(self, range_end: date) -> list[SecurityListing]:
+        """返回与当前导入器范围一致的可用证券列表。"""
+
+        return self._eligible_listings(range_end)
+
     def import_one_year(
         self,
         *,
@@ -98,21 +103,89 @@ class AkshareOneYearHistoryImporter:
         warmup_trading_days: int = 0,
         collected_at: datetime | None = None,
     ) -> HistoryImportSummary:
+        return self._import_range(
+            path=path,
+            requested_start_date=None,
+            requested_end_date=requested_end_date,
+            new_stock_exclusion_days=new_stock_exclusion_days,
+            warmup_trading_days=warmup_trading_days,
+            collected_at=collected_at,
+            included_codes=None,
+        )
+
+    def import_incremental(
+        self,
+        *,
+        path: Path,
+        requested_start_date: date,
+        requested_end_date: date,
+        new_stock_exclusion_days: int,
+        collected_at: datetime | None = None,
+        included_codes: set[str] | None = None,
+    ) -> HistoryImportSummary:
+        """导入指定日期窗口；历史数据已初始化后的日常更新使用此入口。"""
+
+        return self._import_range(
+            path=path,
+            requested_start_date=requested_start_date,
+            requested_end_date=requested_end_date,
+            new_stock_exclusion_days=new_stock_exclusion_days,
+            warmup_trading_days=0,
+            collected_at=collected_at,
+            included_codes=included_codes,
+        )
+
+    def _import_range(
+        self,
+        *,
+        path: Path,
+        requested_start_date: date | None,
+        requested_end_date: date,
+        new_stock_exclusion_days: int,
+        warmup_trading_days: int,
+        collected_at: datetime | None,
+        included_codes: set[str] | None,
+    ) -> HistoryImportSummary:
         imported_at = collected_at or datetime.now(ZoneInfo("Asia/Shanghai"))
         benchmark_by_date = self._benchmark_rows(requested_end_date)
         range_end = max(benchmark_by_date)
+        if (
+            requested_start_date is not None
+            and range_end < requested_end_date
+        ):
+            return HistoryImportSummary(
+                range_start=requested_start_date,
+                range_end=range_end,
+                total_symbols=0,
+                completed_symbols=0,
+                failed_codes=[],
+                published_days=0,
+            )
         official_start = _one_year_start(range_end)
         available_dates = sorted(benchmark_by_date)
-        official_index = next(
-            (
-                index
-                for index, trading_date in enumerate(available_dates)
-                if trading_date >= official_start
-            ),
-            0,
-        )
-        warmup_index = max(0, official_index - max(0, warmup_trading_days))
-        range_start = available_dates[warmup_index]
+        if requested_start_date is None:
+            official_index = next(
+                (
+                    index
+                    for index, trading_date in enumerate(available_dates)
+                    if trading_date >= official_start
+                ),
+                0,
+            )
+            warmup_index = max(
+                0,
+                official_index - max(0, warmup_trading_days),
+            )
+            range_start = available_dates[warmup_index]
+        else:
+            range_start = next(
+                (
+                    trading_date
+                    for trading_date in available_dates
+                    if trading_date >= requested_start_date
+                ),
+                range_end,
+            )
         trading_dates = sorted(
             trading_date
             for trading_date in benchmark_by_date
@@ -120,6 +193,12 @@ class AkshareOneYearHistoryImporter:
         )
         all_trading_dates = sorted(benchmark_by_date)
         listings = self._eligible_listings(range_end)
+        if included_codes is not None:
+            listings = [
+                listing
+                for listing in listings
+                if listing.code in included_codes
+            ]
         completed = completed_history_symbols(
             path,
             source=self._history_source,
@@ -180,7 +259,11 @@ class AkshareOneYearHistoryImporter:
             range_end=range_end,
         )
         published_days = 0
-        if len(completed_after) == len(listings) and self._publish_market_days:
+        if (
+            requested_start_date is None
+            and len(completed_after) == len(listings)
+            and self._publish_market_days
+        ):
             published_days = self._publish_complete_days(
                 path=path,
                 trading_dates=trading_dates,
