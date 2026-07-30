@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from fourseasquant.technical_scoring import DerivativeState
 
 
-TECHNICAL_SIGNAL_VERSION = "core-technical-v1"
+TECHNICAL_SIGNAL_VERSION = "core-technical-v2"
 PatternDirection = Literal["bullish", "bearish", "neutral"]
 PatternFunction = Literal["reversal", "continuation", "neutral"]
 PatternStrength = Literal["strong", "weak", "neutral"]
@@ -400,44 +400,47 @@ def analyze_daily_technical(
         valid_bars[-1].close > valid_bars[-1].open
         and _is_long(valid_bars[-1], current_metrics)
     )
-    valid_volume_breakout = _valid_volume_breakout(
+    broken_resistances = _broken_resistances(
         valid_bars,
         metrics,
         resistances,
     )
-    if valid_volume_breakout and resistances:
-        broken = resistances.pop(0)
-        supports.insert(
-            0,
-            broken.model_copy(
+    valid_volume_breakout = bool(broken_resistances)
+    for broken_resistance in broken_resistances:
+        resistances.remove(broken_resistance)
+        converted_sources = list(
+            dict.fromkeys(
+                (
+                    *broken_resistance.sources,
+                    "polarity_conversion",
+                )
+            )
+        )
+        supports.append(
+            broken_resistance.model_copy(
                 update={
                     "role": "support",
                     "formed_on": source.actual_date,
-                    "sources": list(
-                        dict.fromkeys(
-                            (
-                                *broken.sources,
-                                "polarity_conversion",
-                            )
-                        )
-                    ),
-                    "source_count": len(
-                        set(
-                            (
-                                *broken.sources,
-                                "polarity_conversion",
-                            )
-                        )
-                    ),
+                    "sources": converted_sources,
+                    "source_count": len(converted_sources),
                 }
-            ),
+            )
         )
+    supports.sort(
+        key=lambda level: _support_sort_key(
+            level,
+            current_close=valid_bars[-1].close,
+        )
+    )
     stop_price = (
         supports[0].lower - 0.10 * current_metrics.mr20
         if supports
         else None
     )
-    pressure_target = resistances[0].lower if resistances else None
+    pressure_target = _pressure_target(
+        current_close=valid_bars[-1].close,
+        resistances=resistances,
+    )
     reward_risk = _reward_risk(
         entry=valid_bars[-1].close,
         stop=stop_price,
@@ -448,6 +451,8 @@ def analyze_daily_technical(
         reasons.append("no_active_support")
     if not resistances:
         reasons.append("no_active_resistance_all_time_high")
+    elif pressure_target is None:
+        reasons.append("active_resistance_not_cleared")
 
     return DailyTechnicalAnalysis(
         code=source.code,
@@ -1798,15 +1803,29 @@ def _technical_levels(
         if not _level_invalidated(candidate, bars, metrics)
     ]
     merged = _merge_levels(active, current_mr)
-    supports = [
-        level
-        for level in merged
-        if level.role == "support"
-        and level.lower <= current_close
-    ][:2]
-    resistances = [
-        level for level in merged if level.role == "resistance"
-    ][:2]
+    supports = sorted(
+        (
+            level
+            for level in merged
+            if level.role == "support"
+            and level.lower <= current_close
+        ),
+        key=lambda level: _support_sort_key(
+            level,
+            current_close=current_close,
+        ),
+    )
+    resistances = sorted(
+        (
+            level
+            for level in merged
+            if level.role == "resistance"
+        ),
+        key=lambda level: _resistance_sort_key(
+            level,
+            current_close=current_close,
+        ),
+    )
     return supports, resistances
 
 
@@ -2125,11 +2144,54 @@ def _support_retest(
     )
 
 
-def _valid_volume_breakout(
+def _support_sort_key(
+    level: TechnicalLevel,
+    *,
+    current_close: float,
+) -> tuple[float, int, float]:
+    return (
+        max(0.0, current_close - level.upper),
+        -level.formed_on.toordinal(),
+        -level.center,
+    )
+
+
+def _resistance_sort_key(
+    level: TechnicalLevel,
+    *,
+    current_close: float,
+) -> tuple[float, int, float]:
+    if current_close < level.lower:
+        distance = level.lower - current_close
+    elif current_close > level.upper:
+        distance = current_close - level.upper
+    else:
+        distance = 0.0
+    return (
+        distance,
+        -level.formed_on.toordinal(),
+        level.center,
+    )
+
+
+def _pressure_target(
+    *,
+    current_close: float,
+    resistances: list[TechnicalLevel],
+) -> float | None:
+    if any(
+        resistance.lower <= current_close
+        for resistance in resistances
+    ):
+        return None
+    return resistances[0].lower if resistances else None
+
+
+def _broken_resistances(
     bars: list[DailyTechnicalBar],
     metrics: list[_Metrics],
     resistances: list[TechnicalLevel],
-) -> bool:
+) -> list[TechnicalLevel]:
     metric = metrics[-1]
     if (
         not resistances
@@ -2137,12 +2199,21 @@ def _valid_volume_breakout(
         or metric.volume_ratio is None
         or metric.turnover_ratio is None
     ):
-        return False
-    resistance = resistances[0]
-    return (
-        bars[-1].close > resistance.upper + 0.10 * metric.mr20
-        and metric.volume_ratio >= 1.5
-        and metric.turnover_ratio >= 1.5
+        return []
+    if metric.volume_ratio < 1.5 or metric.turnover_ratio < 1.5:
+        return []
+    broken = [
+        resistance
+        for resistance in resistances
+        if bars[-1].close
+        > resistance.upper + 0.10 * metric.mr20
+    ]
+    return sorted(
+        broken,
+        key=lambda resistance: _resistance_sort_key(
+            resistance,
+            current_close=bars[-1].close,
+        ),
     )
 
 

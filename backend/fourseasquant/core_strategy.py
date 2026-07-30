@@ -6,7 +6,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, Field, model_validator
 
 
-CORE_STRATEGY_VERSION = "core-strategy-v1"
+CORE_STRATEGY_VERSION = "core-strategy-v3"
 FUNDAMENTAL_FRESHNESS_DAYS = 35
 
 CandidateRoute = Literal[

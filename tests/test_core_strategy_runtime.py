@@ -8,7 +8,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import fourseasquant.core_strategy_runtime as runtime
-from fourseasquant.core_strategy import CandidatePipelineDecision
+from fourseasquant.core_strategy import (
+    CORE_STRATEGY_VERSION,
+    CandidatePipelineDecision,
+)
 from fourseasquant.core_strategy_adapters import CoreStrategyDailyInputs
 from fourseasquant.core_strategy_orchestrator import (
     StrategyInvestigationPreparation,
@@ -25,7 +28,7 @@ from fourseasquant.public_opinion_repository import (
 
 
 ACTUAL_DATE = date(2026, 7, 29)
-VERSION = "core-strategy-v1"
+VERSION = CORE_STRATEGY_VERSION
 BEIJING = ZoneInfo("Asia/Shanghai")
 NOW = datetime(2026, 7, 29, 16, 30, tzinfo=BEIJING)
 
