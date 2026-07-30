@@ -400,23 +400,24 @@ def analyze_daily_technical(
         valid_bars[-1].close > valid_bars[-1].open
         and _is_long(valid_bars[-1], current_metrics)
     )
-    valid_volume_breakout = _valid_volume_breakout(
+    broken_resistance = _broken_resistance(
         valid_bars,
         metrics,
         resistances,
     )
-    if valid_volume_breakout and resistances:
-        broken = resistances.pop(0)
+    valid_volume_breakout = broken_resistance is not None
+    if broken_resistance is not None:
+        resistances.remove(broken_resistance)
         supports.insert(
             0,
-            broken.model_copy(
+            broken_resistance.model_copy(
                 update={
                     "role": "support",
                     "formed_on": source.actual_date,
                     "sources": list(
                         dict.fromkeys(
                             (
-                                *broken.sources,
+                                *broken_resistance.sources,
                                 "polarity_conversion",
                             )
                         )
@@ -424,7 +425,7 @@ def analyze_daily_technical(
                     "source_count": len(
                         set(
                             (
-                                *broken.sources,
+                                *broken_resistance.sources,
                                 "polarity_conversion",
                             )
                         )
@@ -437,7 +438,14 @@ def analyze_daily_technical(
         if supports
         else None
     )
-    pressure_target = resistances[0].lower if resistances else None
+    pressure_target = next(
+        (
+            resistance.lower
+            for resistance in resistances
+            if resistance.lower > valid_bars[-1].close
+        ),
+        None,
+    )
     reward_risk = _reward_risk(
         entry=valid_bars[-1].close,
         stop=stop_price,
@@ -1798,15 +1806,31 @@ def _technical_levels(
         if not _level_invalidated(candidate, bars, metrics)
     ]
     merged = _merge_levels(active, current_mr)
-    supports = [
-        level
-        for level in merged
-        if level.role == "support"
-        and level.lower <= current_close
-    ][:2]
-    resistances = [
-        level for level in merged if level.role == "resistance"
-    ][:2]
+    supports = sorted(
+        (
+            level
+            for level in merged
+            if level.role == "support"
+            and level.lower <= current_close
+        ),
+        key=lambda level: (
+            abs(current_close - level.upper),
+            -level.formed_on.toordinal(),
+            -level.center,
+        ),
+    )
+    resistances = sorted(
+        (
+            level
+            for level in merged
+            if level.role == "resistance"
+        ),
+        key=lambda level: (
+            abs(level.lower - current_close),
+            -level.formed_on.toordinal(),
+            level.center,
+        ),
+    )
     return supports, resistances
 
 
@@ -2125,11 +2149,11 @@ def _support_retest(
     )
 
 
-def _valid_volume_breakout(
+def _broken_resistance(
     bars: list[DailyTechnicalBar],
     metrics: list[_Metrics],
     resistances: list[TechnicalLevel],
-) -> bool:
+) -> TechnicalLevel | None:
     metric = metrics[-1]
     if (
         not resistances
@@ -2137,12 +2161,24 @@ def _valid_volume_breakout(
         or metric.volume_ratio is None
         or metric.turnover_ratio is None
     ):
-        return False
-    resistance = resistances[0]
-    return (
-        bars[-1].close > resistance.upper + 0.10 * metric.mr20
-        and metric.volume_ratio >= 1.5
-        and metric.turnover_ratio >= 1.5
+        return None
+    if metric.volume_ratio < 1.5 or metric.turnover_ratio < 1.5:
+        return None
+    broken = [
+        resistance
+        for resistance in resistances
+        if bars[-1].close
+        > resistance.upper + 0.10 * metric.mr20
+    ]
+    if not broken:
+        return None
+    return max(
+        broken,
+        key=lambda resistance: (
+            resistance.upper,
+            resistance.formed_on.toordinal(),
+            resistance.center,
+        ),
     )
 
 

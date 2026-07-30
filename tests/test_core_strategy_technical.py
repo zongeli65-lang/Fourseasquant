@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from random import Random
 
 import pytest
 
@@ -755,3 +756,64 @@ def test_historical_volume_break_converts_resistance_to_support() -> None:
     )
     assert converted.center == pytest.approx(105)
     assert converted.formed_on == bars[50].date
+
+
+def test_nearest_active_levels_drive_stop_and_pressure_target() -> None:
+    rng = Random(4)
+    price = 100.0
+    bars: list[DailyTechnicalBar] = []
+    for index in range(90):
+        step = rng.uniform(-2.5, 2.5)
+        if index % 17 == 0 and index > 0:
+            step += rng.choice([-4.0, 4.0])
+        open_price = max(5.0, price + rng.uniform(-0.8, 0.8))
+        close = max(5.0, open_price + step)
+        high = max(open_price, close) + rng.uniform(0.2, 1.5)
+        low = max(
+            1.0,
+            min(open_price, close) - rng.uniform(0.2, 1.5),
+        )
+        derivative_state: DerivativeState = (
+            "positive"
+            if close > price + 0.3
+            else "negative"
+            if close < price - 0.3
+            else "zero"
+        )
+        bars.append(
+            _bar(
+                index,
+                open_price=open_price,
+                high=high,
+                low=low,
+                close=close,
+                volume=1_000 + rng.randrange(0, 800),
+                turnover_cny=10_000 + rng.randrange(0, 8_000),
+                derivative_state=derivative_state,
+            )
+        )
+        price = close
+
+    analysis = _analyze(bars)
+    current_close = bars[-1].close
+    active_supports = [
+        level
+        for level in analysis.supports
+        if level.lower <= current_close
+    ]
+    active_resistances = [
+        level
+        for level in analysis.resistances
+        if level.lower > current_close
+    ]
+
+    assert len(analysis.supports) > 2
+    assert len(analysis.resistances) > 2
+    assert len(active_supports) >= 2
+    assert len(active_resistances) >= 2
+    assert analysis.supports[0].upper == max(
+        level.upper for level in active_supports
+    )
+    assert analysis.pressure_target == min(
+        level.lower for level in active_resistances
+    )
