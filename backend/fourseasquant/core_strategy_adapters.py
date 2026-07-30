@@ -262,17 +262,20 @@ def load_position_observations(
                 ),
                 weak_bearish_rsi_composite=False,
                 valid_volume_breakout=technical.valid_volume_breakout,
+                confirmed_pressure_breakout=(
+                    technical.confirmed_pressure_breakout
+                ),
                 strong_bullish_continuation=(
                     technical.strong_bullish_continuation
                 ),
                 new_stop_price=(
                     technical.stop_price
-                    if technical.valid_volume_breakout
+                    if technical.confirmed_pressure_breakout
                     else None
                 ),
                 new_pressure_target=(
                     technical.pressure_target
-                    if technical.valid_volume_breakout
+                    if technical.confirmed_pressure_breakout
                     else None
                 ),
                 latest_support_line=(

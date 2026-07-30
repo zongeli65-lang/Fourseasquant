@@ -59,6 +59,7 @@ def _observation(
     standard_rsi_top_divergence: bool = False,
     weak_bearish_rsi_composite: bool = False,
     valid_volume_breakout: bool = False,
+    confirmed_pressure_breakout: bool = False,
     strong_bullish_continuation: bool = False,
     new_stop_price: float | None = None,
     new_pressure_target: float | None = None,
@@ -77,6 +78,7 @@ def _observation(
         standard_rsi_top_divergence=standard_rsi_top_divergence,
         weak_bearish_rsi_composite=weak_bearish_rsi_composite,
         valid_volume_breakout=valid_volume_breakout,
+        confirmed_pressure_breakout=confirmed_pressure_breakout,
         strong_bullish_continuation=strong_bullish_continuation,
         new_stop_price=new_stop_price,
         new_pressure_target=new_pressure_target,
@@ -157,6 +159,28 @@ def test_volume_breakout_extends_holding_and_accepts_new_levels() -> None:
     assert decision.orders == []
     updated = decision.positions[0]
     assert updated.stop_price == 11.8
+    assert updated.pressure_target == 15
+
+
+def test_price_confirmed_breakout_extends_holding_without_volume() -> None:
+    decision = _manage(
+        _position(pressure_target=12),
+        _observation(
+            open_price=11.5,
+            high=12.6,
+            low=11.4,
+            close=12.5,
+            valid_volume_breakout=False,
+            confirmed_pressure_breakout=True,
+            new_stop_price=11,
+            new_pressure_target=15,
+        ),
+    )
+
+    assert decision.orders == []
+    assert len(decision.positions) == 1
+    updated = decision.positions[0]
+    assert updated.stop_price == 11
     assert updated.pressure_target == 15
 
 

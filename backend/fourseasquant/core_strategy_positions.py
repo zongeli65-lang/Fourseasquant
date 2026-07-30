@@ -66,6 +66,7 @@ class PositionObservation(BaseModel):
     standard_rsi_top_divergence: bool = False
     weak_bearish_rsi_composite: bool = False
     valid_volume_breakout: bool = False
+    confirmed_pressure_breakout: bool = False
     strong_bullish_continuation: bool = False
     new_stop_price: float | None = Field(default=None, gt=0)
     new_pressure_target: float | None = Field(default=None, gt=0)
@@ -242,7 +243,11 @@ def manage_positions(
         )
         technical_complete = observation.technical_signals_complete
         valid_breakout = (
-            technical_complete and observation.valid_volume_breakout
+            technical_complete
+            and (
+                observation.confirmed_pressure_breakout
+                or observation.valid_volume_breakout
+            )
         )
         strong_continuation = (
             technical_complete and observation.strong_bullish_continuation
@@ -250,7 +255,7 @@ def manage_positions(
         if valid_breakout:
             if observation.new_stop_price is not None:
                 position.stop_price = observation.new_stop_price
-            # 放量突破旧压力后必须寻找新压力；
+            # 压力确认突破后必须寻找新压力；
             # 没有新压力即进入新高状态。
             position.pressure_target = observation.new_pressure_target
 
