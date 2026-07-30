@@ -103,12 +103,14 @@ def test_production_schedule_retries_when_snapshot_exists_but_candles_are_stale(
         *,
         path: Path,
         trigger_method: TaskTrigger,
+        started_at: datetime,
     ) -> TaskRunResponse:
         real_candle_runs.append(path)
         return execute_daily_task(
             run_date,
             path=path,
             trigger_method=trigger_method,
+            started_at=started_at,
         )
 
     monkeypatch.setattr(automation_module, "database_path", lambda: database)
@@ -201,7 +203,7 @@ def test_failure_notification_includes_stage(tmp_path: Path) -> None:
     assert len(notifier.events) == 1
 
 
-def test_failed_schedule_retries_at_configured_offsets(tmp_path: Path) -> None:
+def test_failed_schedule_retries_at_thirty_minute_offsets(tmp_path: Path) -> None:
     database = tmp_path / "retry.db"
     initialize_database(database)
     notifier = RecordingNotifier()
@@ -213,13 +215,13 @@ def test_failed_schedule_retries_at_configured_offsets(tmp_path: Path) -> None:
         simulate_failure_stage="market_prepare",
     )
     waiting = run_scheduled_task(
-        now=datetime(2026, 7, 21, 16, 39, tzinfo=BEIJING),
+        now=datetime(2026, 7, 21, 16, 59, tzinfo=BEIJING),
         path=database,
         notifier=notifier,
         simulate_failure_stage="market_prepare",
     )
     second = run_scheduled_task(
-        now=datetime(2026, 7, 21, 16, 40, tzinfo=BEIJING),
+        now=datetime(2026, 7, 21, 17, 0, tzinfo=BEIJING),
         path=database,
         notifier=notifier,
         simulate_failure_stage="market_prepare",
@@ -229,6 +231,255 @@ def test_failed_schedule_retries_at_configured_offsets(tmp_path: Path) -> None:
     assert waiting.status == "skipped"
     assert second.status == "failed"
     assert len(task_runs(database)) == 2
+
+
+def test_failed_schedule_retries_every_thirty_minutes_through_2130(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "extended-retry-window.db"
+    initialize_database(database)
+    notifier = RecordingNotifier()
+
+    for hour, minute in (
+        (16, 30),
+        (17, 0),
+        (17, 30),
+        (18, 0),
+        (18, 30),
+        (19, 0),
+        (19, 30),
+        (20, 0),
+        (20, 30),
+        (21, 0),
+        (21, 30),
+    ):
+        outcome = run_scheduled_task(
+            now=datetime(2026, 7, 21, hour, minute, tzinfo=BEIJING),
+            path=database,
+            notifier=notifier,
+            simulate_failure_stage="market_prepare",
+        )
+        assert outcome.status == "failed"
+
+    after_window = run_scheduled_task(
+        now=datetime(2026, 7, 21, 21, 31, tzinfo=BEIJING),
+        path=database,
+        notifier=notifier,
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert after_window.status == "skipped"
+    assert after_window.reason == "自动重试已用尽，请在网站内手动重试"
+    assert len(task_runs(database)) == 11
+
+
+def test_long_market_failure_after_final_slot_notifies_immediately(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "long-market-failure.db"
+    initialize_database(database)
+    notifier = RecordingNotifier()
+    target_date = date(2026, 7, 21)
+
+    monkeypatch.setattr(
+        automation_module,
+        "_execute_claimed_task",
+        lambda **_kwargs: TaskRunResponse(
+            id=1,
+            trigger_method="scheduled",
+            target_date=target_date,
+            started_at=datetime(
+                2026,
+                7,
+                21,
+                21,
+                0,
+                tzinfo=BEIJING,
+            ),
+            finished_at=datetime(
+                2026,
+                7,
+                21,
+                21,
+                31,
+                tzinfo=BEIJING,
+            ),
+            stage="market_prepare",
+            stage_label="市场准备",
+            status="failed",
+            error_summary="上游超时",
+        ),
+    )
+
+    outcome = run_scheduled_task(
+        now=datetime(2026, 7, 21, 21, 0, tzinfo=BEIJING),
+        path=database,
+        notifier=notifier,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.notification_status == "sent"
+    assert len(notifier.events) == 1
+
+
+def test_schedule_does_not_backfill_missed_slots_after_2130(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "missed-retry-window.db"
+    initialize_database(database)
+
+    after_window = run_scheduled_task(
+        now=datetime(2026, 7, 21, 21, 31, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert after_window.status == "skipped"
+    assert after_window.task is None
+    assert after_window.reason == "自动重试已用尽，请在网站内手动重试"
+    assert task_runs(database) == []
+
+
+def test_schedule_does_not_backfill_a_missed_slot_between_half_hours(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "missed-mid-window-slot.db"
+    initialize_database(database)
+
+    first = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+    between_slots = run_scheduled_task(
+        now=datetime(2026, 7, 21, 18, 41, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert first.status == "failed"
+    assert between_slots.status == "skipped"
+    assert between_slots.task is None
+    assert between_slots.reason == "等待下一次自动重试"
+    assert len(task_runs(database)) == 1
+
+
+def test_each_retry_slot_starts_at_most_once_when_an_earlier_slot_was_missed(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "one-attempt-per-slot.db"
+    initialize_database(database)
+
+    first = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+    later_slot = run_scheduled_task(
+        now=datetime(2026, 7, 21, 17, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+    duplicate = run_scheduled_task(
+        now=datetime(2026, 7, 21, 17, 30, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert first.status == "failed"
+    assert later_slot.status == "failed"
+    assert duplicate.status == "skipped"
+    assert duplicate.task is None
+    assert duplicate.reason == "等待下一次自动重试"
+    assert len(task_runs(database)) == 2
+
+
+def test_manual_market_failure_does_not_consume_a_scheduled_slot(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "manual-market-slot-isolation.db"
+    initialize_database(database)
+
+    manual = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        force=True,
+        simulate_failure_stage="market_prepare",
+    )
+    scheduled = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 30, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert manual.status == "failed"
+    assert manual.task is not None
+    assert manual.task.trigger_method == "manual"
+    assert scheduled.status == "failed"
+    assert scheduled.task is not None
+    assert scheduled.task.trigger_method == "scheduled"
+
+
+def test_market_slot_is_rechecked_inside_the_date_lease(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "market-slot-race.db"
+    initialize_database(database)
+    monkeypatch.setattr(
+        automation_module,
+        "market_schedule_slot_exists",
+        lambda *_args, **_kwargs: False,
+    )
+
+    first = run_scheduled_task(
+        now=datetime(2026, 7, 21, 17, 0, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+    raced = run_scheduled_task(
+        now=datetime(2026, 7, 21, 17, 0, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert first.status == "failed"
+    assert raced.status == "skipped"
+    assert raced.task is None
+    assert len(task_runs(database)) == 1
+
+
+def test_published_market_remains_available_to_downstream_after_retry_window(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "published-after-window.db"
+    initialize_database(database)
+
+    published = run_scheduled_task(
+        now=datetime(2026, 7, 21, 16, 30, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+    )
+    after_window = run_scheduled_task(
+        now=datetime(2026, 7, 21, 21, 31, tzinfo=BEIJING),
+        path=database,
+        notifier=RecordingNotifier(),
+    )
+
+    assert published.status == "succeeded"
+    assert after_window.status == "skipped"
+    assert after_window.reason == "该交易日已发布"
 
 
 def test_notification_failure_does_not_rollback_snapshot(
@@ -292,12 +543,14 @@ def test_startup_retries_latest_failed_trading_day_with_real_candles(
         *,
         path: Path,
         trigger_method: TaskTrigger,
+        started_at: datetime,
     ) -> TaskRunResponse:
         candle_runs.append(run_date)
         return execute_daily_task(
             run_date,
             path=path,
             trigger_method=trigger_method,
+            started_at=started_at,
         )
 
     monkeypatch.setattr(automation_module, "database_path", lambda: database)
@@ -315,6 +568,56 @@ def test_startup_retries_latest_failed_trading_day_with_real_candles(
     assert outcome.status == "succeeded"
     assert outcome.target_date == failed_date
     assert candle_runs == [failed_date]
+
+
+def test_startup_catchup_does_not_consume_a_scheduled_retry_slot(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    database = tmp_path / "startup-retry-slots.db"
+    initialize_database(database)
+
+    def fail_market_stage(
+        run_date: date,
+        *,
+        path: Path,
+        trigger_method: TaskTrigger,
+        simulate_failure_stage: str | None = None,
+        propagate_unexpected: bool = True,
+        started_at: datetime | None = None,
+    ) -> TaskRunResponse:
+        del simulate_failure_stage, propagate_unexpected
+        return execute_daily_task(
+            run_date,
+            path=path,
+            trigger_method=trigger_method,
+            simulate_failure_stage="market_prepare",
+            started_at=started_at,
+        )
+
+    monkeypatch.setattr(automation_module, "execute_daily_task", fail_market_stage)
+    current = datetime(2026, 7, 21, 16, 30, tzinfo=BEIJING)
+
+    startup = run_startup_catchup(
+        now=current,
+        path=database,
+        notifier=RecordingNotifier(),
+    )
+    scheduled = run_scheduled_task(
+        now=current,
+        path=database,
+        notifier=RecordingNotifier(),
+        simulate_failure_stage="market_prepare",
+    )
+
+    assert startup.status == "failed"
+    assert startup.task is not None
+    assert startup.task.trigger_method == "startup_catchup"
+    assert scheduled.status == "failed"
+    assert [run.trigger_method for run in task_runs(database)] == [
+        "scheduled",
+        "startup_catchup",
+    ]
 
 
 def test_manual_today_before_close_targets_previous_trading_day(

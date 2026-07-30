@@ -40,7 +40,13 @@ from fourseasquant.task_logging import log_task_event
 
 
 TaskStatus = Literal["not_run", "running", "succeeded", "failed"]
-TaskTrigger = Literal["manual", "retry", "backfill", "scheduled"]
+TaskTrigger = Literal[
+    "manual",
+    "retry",
+    "backfill",
+    "scheduled",
+    "startup_catchup",
+]
 FailureStage = Literal[
     "market_prepare",
     "strategy_run",
@@ -263,13 +269,14 @@ def execute_daily_task(
     trigger_method: TaskTrigger = "manual",
     simulate_failure_stage: FailureStage | None = None,
     propagate_unexpected: bool = True,
+    started_at: datetime | None = None,
 ) -> TaskRunResponse:
     selected_path = path or database_path()
-    started_at = datetime.now(ZoneInfo("Asia/Shanghai"))
+    task_started_at = started_at or datetime.now(ZoneInfo("Asia/Shanghai"))
     task_id = create_task_run(
         selected_path,
         target_date,
-        started_at,
+        task_started_at,
         trigger_method=trigger_method,
     )
     current_stage: FailureStage = "market_prepare"
@@ -333,7 +340,7 @@ def execute_daily_task(
                 id=task_id,
                 trigger_method=trigger_method,
                 target_date=target_date,
-                started_at=started_at,
+                started_at=task_started_at,
                 finished_at=failed_at,
                 stage=current_stage,
                 stage_label=STAGE_LABELS[current_stage],
@@ -354,7 +361,7 @@ def execute_daily_task(
         id=task_id,
         trigger_method=trigger_method,
         target_date=target_date,
-        started_at=started_at,
+        started_at=task_started_at,
         finished_at=finished_at,
         stage="completed",
         stage_label=STAGE_LABELS["completed"],

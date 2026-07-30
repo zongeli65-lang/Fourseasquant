@@ -426,6 +426,16 @@ def initialize_database(path: Path) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS market_automation_schedule_slots (
+                target_date TEXT NOT NULL,
+                slot_started_at TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                PRIMARY KEY (target_date, slot_started_at)
+            )
+            """
+        )
         claim_columns = {
             cast(str, row[1])
             for row in connection.execute("PRAGMA table_info(automation_claims)")
@@ -486,7 +496,7 @@ def initialize_database(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO app_metadata (key, value)
-            VALUES ('schema_version', '31')
+            VALUES ('schema_version', '32')
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
@@ -503,7 +513,7 @@ def database_is_ready(path: Path) -> bool:
             )
     except sqlite3.Error:
         return False
-    return row == ("31",)
+    return row == ("32",)
 
 
 def save_historical_market_summary(
@@ -1163,3 +1173,42 @@ def scheduled_attempt_count(path: Path, target_date: date) -> int:
             ).fetchone(),
         )
     return row[0]
+
+
+def market_schedule_slot_exists(
+    path: Path,
+    target_date: date,
+    slot_started_at: datetime,
+) -> bool:
+    with open_database_connection(path) as connection:
+        row = connection.execute(
+            """
+            SELECT 1 FROM market_automation_schedule_slots
+            WHERE target_date = ? AND slot_started_at = ?
+            LIMIT 1
+            """,
+            (target_date.isoformat(), slot_started_at.isoformat()),
+        ).fetchone()
+    return row is not None
+
+
+def claim_market_schedule_slot(
+    path: Path,
+    target_date: date,
+    slot_started_at: datetime,
+    claimed_at: datetime,
+) -> bool:
+    with open_database_connection(path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO market_automation_schedule_slots (
+                target_date, slot_started_at, claimed_at
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                target_date.isoformat(),
+                slot_started_at.isoformat(),
+                claimed_at.isoformat(),
+            ),
+        )
+    return cursor.rowcount == 1

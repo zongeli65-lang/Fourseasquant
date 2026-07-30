@@ -285,6 +285,16 @@ def create_fundamental_tables(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fundamental_automation_schedule_slots (
+            target_date TEXT NOT NULL,
+            slot_started_at TEXT NOT NULL,
+            claimed_at TEXT NOT NULL,
+            PRIMARY KEY (target_date, slot_started_at)
+        )
+        """
+    )
 
 
 def claim_fundamental_update(
@@ -358,6 +368,28 @@ def renew_fundamental_update(
                 renewed_at.isoformat(),
                 target_date.isoformat(),
                 claim_id,
+            ),
+        )
+    return cursor.rowcount == 1
+
+
+def claim_fundamental_schedule_slot(
+    path: Path,
+    target_date: date,
+    slot_started_at: datetime,
+    claimed_at: datetime,
+) -> bool:
+    with open_database_connection(path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO fundamental_automation_schedule_slots (
+                target_date, slot_started_at, claimed_at
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                target_date.isoformat(),
+                slot_started_at.isoformat(),
+                claimed_at.isoformat(),
             ),
         )
     return cursor.rowcount == 1

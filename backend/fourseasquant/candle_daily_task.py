@@ -28,6 +28,7 @@ def execute_daily_task_with_candles(
     *,
     path: Path | None = None,
     trigger_method: TaskTrigger = "manual",
+    started_at: datetime | None = None,
 ) -> TaskRunResponse:
     selected_path = path or database_path()
 
@@ -65,6 +66,7 @@ def execute_daily_task_with_candles(
         market_stage_factory=prepare_market,
         trigger_method=trigger_method,
         propagate_unexpected=False,
+        started_at=started_at,
     )
     if result.status == "succeeded":
         try:

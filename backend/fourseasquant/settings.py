@@ -28,6 +28,10 @@ class SettingsUpdate(BaseModel):
         hour, minute = (int(part) for part in value.split(":"))
         if hour > 23 or minute > 59:
             raise ValueError("自动更新时间必须是有效的 24 小时时间")
+        if (hour, minute) > (18, 59):
+            raise ValueError(
+                "自动更新时间不得晚于 18:59，避免五小时重试窗口跨日"
+            )
         return value
 
 

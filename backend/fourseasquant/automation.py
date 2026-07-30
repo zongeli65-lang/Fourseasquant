@@ -16,17 +16,19 @@ from fourseasquant.candlesticks import latest_candle_publication
 from fourseasquant.daily_snapshots import (
     FailureStage,
     TaskRunResponse,
+    TaskTrigger,
     execute_daily_task,
 )
 from fourseasquant.candle_daily_task import execute_daily_task_with_candles
 from fourseasquant.database import (
+    claim_market_schedule_slot,
     claim_automation_date,
     database_is_ready,
     database_path,
     initialize_database,
+    market_schedule_slot_exists,
     release_automation_date,
     renew_automation_date_claim,
-    scheduled_attempt_count,
     snapshot_exists,
 )
 from fourseasquant.settings import read_settings
@@ -40,7 +42,8 @@ from fourseasquant.trading_calendar import (
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 CATCHUP_LOOKBACK_DAYS = 45
-RETRY_MINUTES = (0, 10, 30, 60)
+RETRY_MINUTES = tuple(range(0, 301, 30))
+FINAL_RETRY_WAKE_GRACE = timedelta(minutes=1)
 
 
 class TargetDateClaimLease:
@@ -180,15 +183,55 @@ def run_scheduled_task(
             target_date=target_date,
             reason="非交易日",
         )
-    allowed_attempts = _allowed_scheduled_attempts(
-        current=current,
-        scheduled_time=scheduled_time,
-    )
-    if not force and allowed_attempts == 0:
+    final_retry_due = _final_retry_time(target_date, scheduled_time)
+    if not force and _target_data_is_complete(
+        selected_path,
+        target_date,
+        require_candles=use_real_candles,
+    ):
+        return AutomationOutcome(
+            status="skipped",
+            target_date=target_date,
+            reason="该交易日已发布",
+        )
+    retry_due = _latest_retry_time(current, scheduled_time)
+    if not force and retry_due is None:
         return AutomationOutcome(
             status="skipped",
             target_date=target_date,
             reason="尚未到自动更新时间",
+        )
+    if (
+        not force
+        and retry_due is not None
+        and current >= retry_due + FINAL_RETRY_WAKE_GRACE
+    ):
+        return AutomationOutcome(
+            status="skipped",
+            target_date=target_date,
+            reason=(
+                "自动重试已用尽，请在网站内手动重试"
+                if retry_due == final_retry_due
+                else "等待下一次自动重试"
+            ),
+        )
+    if (
+        not force
+        and retry_due is not None
+        and market_schedule_slot_exists(
+            selected_path,
+            target_date,
+            retry_due,
+        )
+    ):
+        return AutomationOutcome(
+            status="skipped",
+            target_date=target_date,
+            reason=(
+                "自动重试已用尽，请在网站内手动重试"
+                if retry_due == final_retry_due
+                else "等待下一次自动重试"
+            ),
         )
     if not force and _target_data_is_complete(
         selected_path,
@@ -200,18 +243,6 @@ def run_scheduled_task(
             target_date=target_date,
             reason="该交易日已发布",
         )
-    attempts = scheduled_attempt_count(selected_path, target_date)
-    if not force and attempts >= allowed_attempts:
-        final_retry_due = _final_retry_time(target_date, scheduled_time)
-        return AutomationOutcome(
-            status="skipped",
-            target_date=target_date,
-            reason=(
-                "自动重试已用尽，请在网站内手动重试"
-                if current >= final_retry_due
-                else "等待下一次自动重试"
-            ),
-        )
     task = _execute_claimed_task(
         target_date=target_date,
         current=current,
@@ -219,6 +250,8 @@ def run_scheduled_task(
         simulate_failure_stage=simulate_failure_stage,
         allow_existing=force,
         use_real_candles=use_real_candles,
+        trigger_method="manual" if force else "scheduled",
+        scheduled_retry_due=retry_due if not force else None,
     )
     if task is None:
         return AutomationOutcome(
@@ -236,15 +269,27 @@ def run_scheduled_task(
         outcome.status == "failed"
         and not force
         and simulate_failure_stage is None
-        and current < _final_retry_time(target_date, scheduled_time)
+        and (task.finished_at or current)
+        < _final_retry_time(target_date, scheduled_time)
     ):
         return outcome
-    return _notify(outcome, notifier or MacOSNotifier(), current)
+    return _notify(
+        outcome,
+        notifier or MacOSNotifier(),
+        task.finished_at or current,
+    )
 
 
-def _allowed_scheduled_attempts(*, current: datetime, scheduled_time: time) -> int:
+def _latest_retry_time(
+    current: datetime,
+    scheduled_time: time,
+) -> datetime | None:
     base = datetime.combine(current.date(), scheduled_time, tzinfo=BEIJING)
-    return sum(current >= base + timedelta(minutes=minutes) for minutes in RETRY_MINUTES)
+    for minutes in reversed(RETRY_MINUTES):
+        retry_due = base + timedelta(minutes=minutes)
+        if current >= retry_due:
+            return retry_due
+    return None
 
 
 def _final_retry_time(target_date: date, scheduled_time: time) -> datetime:
@@ -287,6 +332,7 @@ def run_startup_catchup(
         current=current,
         path=selected_path,
         use_real_candles=use_real_candles,
+        trigger_method="startup_catchup",
     )
     if task is None:
         return AutomationOutcome(
@@ -368,6 +414,8 @@ def _execute_claimed_task(
     simulate_failure_stage: FailureStage | None = None,
     allow_existing: bool = False,
     use_real_candles: bool = False,
+    trigger_method: TaskTrigger = "scheduled",
+    scheduled_retry_due: datetime | None = None,
 ) -> TaskRunResponse | None:
     lease = TargetDateClaimLease.acquire(
         path,
@@ -383,18 +431,30 @@ def _execute_claimed_task(
             require_candles=use_real_candles,
         ):
             return None
+        if trigger_method == "scheduled":
+            if scheduled_retry_due is None:
+                raise ValueError("定时任务缺少重试时槽")
+            if not claim_market_schedule_slot(
+                path,
+                target_date,
+                scheduled_retry_due,
+                current,
+            ):
+                return None
         if use_real_candles and simulate_failure_stage is None:
             return execute_daily_task_with_candles(
                 target_date,
                 path=path,
-                trigger_method="scheduled",
+                trigger_method=trigger_method,
+                started_at=current,
             )
         return execute_daily_task(
             target_date,
             path=path,
-            trigger_method="scheduled",
+            trigger_method=trigger_method,
             simulate_failure_stage=simulate_failure_stage,
             propagate_unexpected=False,
+            started_at=current,
         )
 
 
