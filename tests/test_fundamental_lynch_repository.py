@@ -147,7 +147,7 @@ def test_schema_nineteen_contains_lynch_publication_tables(
             )
         }
 
-    assert version == ("31",)
+    assert version == ("32",)
     assert {
         "lynch_financial_base_batches",
         "lynch_financial_bases",

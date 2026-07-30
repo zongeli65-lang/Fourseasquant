@@ -739,6 +739,7 @@ export function App() {
                                       retry: "重试",
                                       backfill: "补算",
                                       scheduled: "定时",
+                                      startup_catchup: "启动补跑",
                                     } as Record<string, string>
                                   )[item.trigger_method] ?? item.trigger_method}
                                 </td>

@@ -49,7 +49,7 @@ def test_database_initializes_industry_chain_core_tables(tmp_path: Path) -> None
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
     assert CORE_TABLES <= table_names
-    assert version == ("31",)
+    assert version == ("32",)
     assert database_is_ready(database) is True
 
 

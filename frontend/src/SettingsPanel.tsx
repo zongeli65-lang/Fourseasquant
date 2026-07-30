@@ -206,6 +206,7 @@ export function SettingsPanel({
               <span>自动更新时间</span>
               <input
                 type="time"
+                max="18:59"
                 value={data.auto_update_time}
                 disabled={backfillStatus === "running"}
                 onChange={(event) => updateData({ auto_update_time: event.target.value })}

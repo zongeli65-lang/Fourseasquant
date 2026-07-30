@@ -63,7 +63,7 @@ def test_version_one_task_history_is_migrated_with_meaningful_stages(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
         stage = connection.execute("SELECT stage FROM task_runs").fetchone()
-    assert version == ("31",)
+    assert version == ("32",)
     assert stage == ("completed",)
 
 
@@ -95,10 +95,54 @@ def test_version_two_automation_claims_gain_owned_claim_ids(tmp_path: Path) -> N
         claim = connection.execute(
             "SELECT target_date, claim_id FROM automation_claims"
         ).fetchone()
-    assert version == ("31",)
+    assert version == ("32",)
     assert claim is not None
     assert claim[0] == "2026-07-21"
     assert claim[1]
+
+
+def test_version_thirty_one_adds_idempotent_automation_schedule_slots(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "version-thirty-one.db"
+    initialize_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE market_automation_schedule_slots")
+        connection.execute("DROP TABLE fundamental_automation_schedule_slots")
+        connection.execute(
+            """
+            UPDATE app_metadata
+            SET value = '31'
+            WHERE key = 'schema_version'
+            """
+        )
+
+    initialize_database(database)
+
+    with sqlite3.connect(database) as connection:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name IN (
+                    'market_automation_schedule_slots',
+                    'fundamental_automation_schedule_slots'
+                  )
+                """
+            )
+        }
+        version = connection.execute(
+            "SELECT value FROM app_metadata WHERE key = 'schema_version'"
+        ).fetchone()
+
+    assert tables == {
+        "market_automation_schedule_slots",
+        "fundamental_automation_schedule_slots",
+    }
+    assert version == ("32",)
 
 
 def test_stale_owner_cannot_release_newer_automation_claim(tmp_path: Path) -> None:
@@ -242,7 +286,7 @@ def test_version_fifteen_capital_batches_migrate_to_unknown_insider_window(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         ).fetchone()
     assert migrated == (0,)
-    assert version == ("31",)
+    assert version == ("32",)
 
 
 def test_snapshot_and_technical_publication_activate_atomically(

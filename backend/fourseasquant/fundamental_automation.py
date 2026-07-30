@@ -17,6 +17,7 @@ from fourseasquant.database import database_path, initialize_database
 from fourseasquant.fundamental_capital_actions import CapitalActionSnapshot
 from fourseasquant.fundamental_repository import (
     FundamentalUpdateAttempt,
+    claim_fundamental_schedule_slot,
     claim_fundamental_update,
     read_latest_capital_action_batch,
     read_latest_published_capital_action_snapshot,
@@ -27,13 +28,13 @@ from fourseasquant.fundamental_repository import (
     save_fundamental_update_attempt,
 )
 from fourseasquant.settings import read_settings
-from fourseasquant.sqlite_connection import open_database_connection
 from fourseasquant.trading_calendar import is_trading_day
 
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-RETRY_MINUTES = (0, 10, 30, 60)
+RETRY_MINUTES = tuple(range(0, 301, 30))
+FINAL_RETRY_WAKE_GRACE = timedelta(minutes=1)
 CommandRunner = Callable[[list[str], Path], int]
 NowProvider = Callable[[], datetime]
 
@@ -43,6 +44,7 @@ class FundamentalAutomationOutcome(BaseModel):
     target_date: date
     stage: Literal["schedule", "capital_actions", "monthly_snapshot", "complete"]
     reason: str
+    notification_due: bool = False
 
 
 class FundamentalUpdateLease:
@@ -124,13 +126,20 @@ class FundamentalUpdateLease:
 def run_scheduled_fundamental_update(
     *,
     now: datetime | None = None,
+    now_provider: NowProvider | None = None,
     path: Path | None = None,
     target_date: date | None = None,
     force: bool = False,
     ignore_schedule: bool = False,
+    notify_failure_immediately: bool = False,
     command_runner: CommandRunner | None = None,
 ) -> FundamentalAutomationOutcome:
     current = (now or datetime.now(BEIJING)).astimezone(BEIJING)
+    clock = now_provider or (
+        (lambda: current)
+        if now is not None
+        else (lambda: datetime.now(BEIJING))
+    )
     selected_path = path or database_path()
     initialize_database(selected_path)
     selected_date = target_date or current.date()
@@ -140,6 +149,7 @@ def run_scheduled_fundamental_update(
         selected_path,
         selected_date,
         claimed_at=current,
+        now=clock,
     )
     if lease is None:
         return _outcome(
@@ -155,7 +165,9 @@ def run_scheduled_fundamental_update(
             selected_date=selected_date,
             force=force,
             ignore_schedule=ignore_schedule,
+            notify_failure_immediately=notify_failure_immediately,
             command_runner=command_runner,
+            now_provider=clock,
         )
 
 
@@ -166,13 +178,21 @@ def _run_claimed_fundamental_update(
     selected_date: date,
     force: bool,
     ignore_schedule: bool,
+    notify_failure_immediately: bool,
     command_runner: CommandRunner | None,
+    now_provider: NowProvider,
 ) -> FundamentalAutomationOutcome:
     scheduled_time = time.fromisoformat(
         read_settings(selected_path).auto_update_time
     )
-    allowed_attempts = _allowed_attempts(current, scheduled_time)
-    if not force and not ignore_schedule and allowed_attempts == 0:
+    retry_due = _latest_retry_time(current, scheduled_time)
+    final_retry_due = _final_retry_time(selected_date, scheduled_time)
+    failure_notification_due = (
+        force
+        or notify_failure_immediately
+        or retry_due == final_retry_due
+    )
+    if not force and not ignore_schedule and retry_due is None:
         return _outcome(
             "skipped",
             selected_date,
@@ -210,11 +230,11 @@ def _run_claimed_fundamental_update(
             "complete",
             "该交易日资本行为已完整发布",
         )
-    attempts = _failed_attempt_count(selected_path, selected_date)
     if (
         not force
         and not ignore_schedule
-        and attempts >= allowed_attempts
+        and retry_due is not None
+        and current >= retry_due + FINAL_RETRY_WAKE_GRACE
     ):
         return _outcome(
             "skipped",
@@ -222,7 +242,28 @@ def _run_claimed_fundamental_update(
             "schedule",
             (
                 "自动重试已用尽，请在网站内手动重试"
-                if allowed_attempts == len(RETRY_MINUTES)
+                if retry_due == final_retry_due
+                else "等待下一次自动重试"
+            ),
+        )
+    if (
+        not force
+        and not ignore_schedule
+        and retry_due is not None
+        and not claim_fundamental_schedule_slot(
+            selected_path,
+            selected_date,
+            retry_due,
+            current,
+        )
+    ):
+        return _outcome(
+            "skipped",
+            selected_date,
+            "schedule",
+            (
+                "自动重试已用尽，请在网站内手动重试"
+                if retry_due == final_retry_due
                 else "等待下一次自动重试"
             ),
         )
@@ -261,6 +302,11 @@ def _run_claimed_fundamental_update(
                 selected_date,
                 "capital_actions",
                 "资本行为采集或完整性校验失败",
+                notification_due=(
+                    failure_notification_due
+                    or now_provider().astimezone(BEIJING)
+                    >= final_retry_due
+                ),
             )
         published = refreshed
 
@@ -302,6 +348,11 @@ def _run_claimed_fundamental_update(
                 selected_date,
                 "monthly_snapshot",
                 "月末基本面快照未完整生成",
+                notification_due=(
+                    failure_notification_due
+                    or now_provider().astimezone(BEIJING)
+                    >= final_retry_due
+                ),
             )
         save_fundamental_update_attempt(
             selected_path,
@@ -366,36 +417,21 @@ def _record_command_failure_if_needed(
     )
 
 
-def _failed_attempt_count(path: Path, target_date: date) -> int:
-    with open_database_connection(path) as connection:
-        capital_row = connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM capital_action_batches
-            WHERE as_of_date = ? AND status = 'failed'
-            """,
-            (target_date.isoformat(),),
-        ).fetchone()
-        monthly_row = connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM fundamental_update_attempts
-            WHERE target_date = ? AND status = 'failed'
-            """,
-            (target_date.isoformat(),),
-        ).fetchone()
-    return (
-        (int(capital_row[0]) if capital_row is not None else 0)
-        + (int(monthly_row[0]) if monthly_row is not None else 0)
-    )
-
-
-def _allowed_attempts(current: datetime, scheduled_time: time) -> int:
+def _latest_retry_time(
+    current: datetime,
+    scheduled_time: time,
+) -> datetime | None:
     base = datetime.combine(current.date(), scheduled_time, tzinfo=BEIJING)
-    return sum(
-        current >= base + timedelta(minutes=minutes)
-        for minutes in RETRY_MINUTES
-    )
+    for minutes in reversed(RETRY_MINUTES):
+        retry_due = base + timedelta(minutes=minutes)
+        if current >= retry_due:
+            return retry_due
+    return None
+
+
+def _final_retry_time(target_date: date, scheduled_time: time) -> datetime:
+    base = datetime.combine(target_date, scheduled_time, tzinfo=BEIJING)
+    return base + timedelta(minutes=RETRY_MINUTES[-1])
 
 
 def _is_month_end_trading_day(target_date: date) -> bool:
@@ -412,11 +448,13 @@ def _outcome(
     target_date: date,
     stage: Literal["schedule", "capital_actions", "monthly_snapshot", "complete"],
     reason: str,
+    *,
+    notification_due: bool = False,
 ) -> FundamentalAutomationOutcome:
     return FundamentalAutomationOutcome(
         status=status,
         target_date=target_date,
         stage=stage,
         reason=reason,
+        notification_due=notification_due,
     )
-    release_fundamental_update,

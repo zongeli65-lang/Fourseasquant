@@ -49,6 +49,7 @@ def main() -> int:
             run_scheduled_fundamental_update(
                 target_date=market.target_date,
                 ignore_schedule=True,
+                notify_failure_immediately=True,
             )
             if market_allows_fundamental
             else None
@@ -62,7 +63,7 @@ def main() -> int:
             _advance_core_strategy(market.target_date)
             if (
                 catchup_fundamental is not None
-                and catchup_fundamental.status != "failed"
+                and catchup_fundamental.stage == "complete"
             )
             else None
         )
@@ -144,12 +145,16 @@ def main() -> int:
         market.status == "skipped" and market.reason == "该交易日已发布"
     )
     if market_allows_fundamental:
-        fundamental = run_scheduled_fundamental_update(force=force)
+        fundamental = run_scheduled_fundamental_update(
+            target_date=market.target_date,
+            force=force,
+            ignore_schedule=market.status == "succeeded",
+        )
         lynch = run_scheduled_lynch_update(
             target_date=market.target_date,
             force=force,
         )
-        if fundamental.status != "failed":
+        if fundamental.stage == "complete":
             strategy = _advance_core_strategy(market.target_date)
 
     failed = market.status == "failed" or (
@@ -159,13 +164,40 @@ def main() -> int:
     ) or (
         strategy is not None and strategy.state == "failed"
     )
-    should_notify = market.status in {"succeeded", "failed"} or (
+    market_failure_due = (
+        market.status == "failed"
+        and market.notification_status == "sent"
+    )
+    fundamental_failure_due = (
         fundamental is not None
-        and fundamental.status in {"succeeded", "failed"}
-    ) or (
-        lynch is not None and lynch.status in {"succeeded", "failed"}
-    ) or (
+        and fundamental.status == "failed"
+        and fundamental.notification_due
+    )
+    lynch_failure_due = (
+        lynch is not None and lynch.status == "failed"
+    )
+    strategy_failure_due = (
         strategy is not None and strategy.state == "failed"
+    )
+    any_success = market.status == "succeeded" or (
+        fundamental is not None and fundamental.status == "succeeded"
+    ) or (
+        lynch is not None and lynch.status == "succeeded"
+    )
+    fundamental_complete = (
+        fundamental is None or fundamental.stage == "complete"
+    )
+    success_due = (
+        not failed
+        and fundamental_complete
+        and any_success
+    )
+    should_notify = (
+        market_failure_due
+        or fundamental_failure_due
+        or lynch_failure_due
+        or strategy_failure_due
+        or success_due
     )
     if should_notify:
         try:
@@ -215,7 +247,11 @@ def _notify_combined(
             "日频行情或策略任务失败，请查看网站状态与本机日志。",
         )
         return
-    if fundamental is not None and fundamental.status == "failed":
+    if (
+        fundamental is not None
+        and fundamental.status == "failed"
+        and fundamental.notification_due
+    ):
         notifier.send(
             "Fourseasquant 基本面更新失败",
             f"{fundamental.target_date.isoformat()} · {fundamental.reason}",

@@ -118,11 +118,233 @@ def test_failed_capital_command_records_visible_failure_and_waits_for_retry(
 
     assert failed.status == "failed"
     assert failed.stage == "capital_actions"
+    assert failed.notification_due is False
     assert waiting.status == "skipped"
     assert waiting.reason == "等待下一次自动重试"
     assert batch is not None
     assert batch.status == "failed"
     assert batch.errors == {"__global__": "资本行为命令退出码 2"}
+
+
+def test_failed_capital_retries_every_thirty_minutes_through_2130(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "extended-capital-retry-window.db"
+    initialize_database(database)
+
+    for hour, minute in (
+        (16, 30),
+        (17, 0),
+        (17, 30),
+        (18, 0),
+        (18, 30),
+        (19, 0),
+        (19, 30),
+        (20, 0),
+        (20, 30),
+        (21, 0),
+        (21, 30),
+    ):
+        outcome = run_scheduled_fundamental_update(
+            now=datetime(2026, 7, 24, hour, minute, tzinfo=BEIJING),
+            path=database,
+            command_runner=lambda _command, _path: 2,
+        )
+        assert outcome.status == "failed"
+        assert outcome.notification_due == ((hour, minute) == (21, 30))
+
+    after_window = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 21, 31, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert after_window.status == "skipped"
+    assert after_window.reason == "自动重试已用尽，请在网站内手动重试"
+
+
+def test_long_capital_failure_after_final_slot_is_notification_due(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "long-capital-failure.db"
+    initialize_database(database)
+
+    outcome = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 21, 0, tzinfo=BEIJING),
+        now_provider=lambda: datetime(
+            2026,
+            7,
+            24,
+            21,
+            31,
+            tzinfo=BEIJING,
+        ),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.notification_due is True
+
+
+def test_long_month_end_failure_after_final_slot_is_notification_due(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "long-month-end-failure.db"
+    initialize_database(database)
+    target_date = date(2026, 7, 31)
+    save_capital_action_snapshot(
+        database,
+        CapitalActionSnapshot(
+            as_of_date=target_date,
+            expected_codes=["600000"],
+            completed_codes=["600000"],
+            events=[],
+            errors={},
+        ),
+        collected_at=datetime(2026, 7, 31, 20, 59, tzinfo=BEIJING),
+    )
+
+    outcome = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 31, 21, 0, tzinfo=BEIJING),
+        now_provider=lambda: datetime(
+            2026,
+            7,
+            31,
+            21,
+            31,
+            tzinfo=BEIJING,
+        ),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.stage == "monthly_snapshot"
+    assert outcome.notification_due is True
+
+
+def test_capital_schedule_does_not_backfill_missed_retry_slots(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "missed-capital-retry-slot.db"
+    initialize_database(database)
+
+    first = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 16, 30, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+    between_slots = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 18, 41, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+    after_window = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 21, 31, tzinfo=BEIJING),
+        path=tmp_path / "fresh-after-window.db",
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert first.status == "failed"
+    assert between_slots.status == "skipped"
+    assert between_slots.reason == "等待下一次自动重试"
+    assert after_window.status == "skipped"
+    assert after_window.reason == "自动重试已用尽，请在网站内手动重试"
+
+
+def test_each_capital_retry_slot_starts_at_most_once(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "one-capital-attempt-per-slot.db"
+    initialize_database(database)
+
+    first = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 16, 30, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+    later_slot = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 17, 30, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+    duplicate = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 17, 30, 30, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert first.status == "failed"
+    assert later_slot.status == "failed"
+    assert duplicate.status == "skipped"
+    assert duplicate.reason == "等待下一次自动重试"
+
+
+def test_manual_capital_failure_does_not_consume_a_scheduled_slot(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "manual-capital-slot-isolation.db"
+    initialize_database(database)
+
+    manual = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 16, 30, tzinfo=BEIJING),
+        path=database,
+        force=True,
+        command_runner=lambda _command, _path: 2,
+    )
+    scheduled = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 16, 30, 30, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert manual.status == "failed"
+    assert manual.notification_due is True
+    assert scheduled.status == "failed"
+    assert scheduled.notification_due is False
+
+
+def test_continuation_failure_does_not_consume_a_scheduled_slot(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "continuation-capital-slot-isolation.db"
+    initialize_database(database)
+
+    continuation = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 17, 0, tzinfo=BEIJING),
+        path=database,
+        ignore_schedule=True,
+        command_runner=lambda _command, _path: 2,
+    )
+    scheduled = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 17, 0, 30, tzinfo=BEIJING),
+        path=database,
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert continuation.status == "failed"
+    assert continuation.notification_due is False
+    assert scheduled.status == "failed"
+    assert scheduled.notification_due is False
+
+
+def test_startup_catchup_failure_notifies_immediately(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "startup-capital-notification.db"
+    initialize_database(database)
+
+    outcome = run_scheduled_fundamental_update(
+        now=datetime(2026, 7, 24, 17, 0, tzinfo=BEIJING),
+        path=database,
+        ignore_schedule=True,
+        notify_failure_immediately=True,
+        command_runner=lambda _command, _path: 2,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.notification_due is True
 
 
 def test_month_end_runs_capital_then_monthly_but_other_days_only_capital(
@@ -237,7 +459,7 @@ def test_failed_month_end_snapshot_retries_without_rerunning_capital(
         command_runner=run_monthly,
     )
     retried = run_scheduled_fundamental_update(
-        now=datetime(2026, 7, 31, 16, 40, tzinfo=BEIJING),
+        now=datetime(2026, 7, 31, 17, 0, tzinfo=BEIJING),
         path=database,
         command_runner=run_monthly,
     )
