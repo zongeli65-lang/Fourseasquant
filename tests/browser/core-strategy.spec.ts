@@ -119,6 +119,7 @@ test("核心策略页面展示机械机会、模拟订单与完整组合", async
       body: JSON.stringify({
         snapshot: {
           actual_date: targetDate,
+          strategy_version: "core-strategy-v1",
           initial_capital: 100000,
           available_cash: 74990,
           net_asset_value: 99990,
@@ -228,4 +229,200 @@ test("核心策略首次初始化页面在最低桌面宽度无页面级横向�
     page: document.documentElement.scrollWidth,
   }));
   expect(dimensions.page).toBeLessThanOrEqual(dimensions.viewport);
+});
+
+test("今日尚未完成时展示最近完整组合及其真实绩效", async ({ page }) => {
+  const requestedDate = "2026-07-30";
+  const displayedDate = "2026-07-29";
+  let requestedTodayStatus = false;
+  let requestedAnchoredDay = false;
+
+  await page.route("**/api/core-strategy/run-status*", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    requestedTodayStatus =
+      requestUrl.searchParams.get("target_date") === requestedDate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        requested_date: requestedDate,
+        actual_date: null,
+        strategy_version: "core-strategy-v1",
+        stage: "not_prepared",
+        message: "该交易日尚未生成核心策略调查目标",
+        account: {
+          initial_capital: 20000,
+          initialized_at: "2026-07-28T16:00:00+08:00",
+        },
+        candidate_count: 0,
+        fundamental_target_count: 0,
+        opinion_target_codes: [],
+        opinion_jobs: {
+          pending: 0,
+          running: 0,
+          succeeded: 0,
+          failed: 0,
+          blocked: 0,
+        },
+        prepared_at: null,
+        auto_finalize_at: null,
+        finalized_at: null,
+        order_count: 0,
+        holding_count: 0,
+        available_cash: null,
+        net_asset_value: null,
+        portfolio_publication_complete: false,
+        latest_attempt: null,
+      }),
+    });
+  });
+  await page.route("**/api/core-strategy/days/*", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    requestedAnchoredDay =
+      requestUrl.pathname.endsWith(`/days/${displayedDate}`)
+      && requestUrl.searchParams.get("strategy_version") === "core-strategy-v1";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        snapshot: {
+          actual_date: displayedDate,
+          strategy_version: "core-strategy-v1",
+          market_state: "sideways",
+          entry_planning: {
+            maximum_positions: 3,
+            full_position_slot: 6666.67,
+            remaining_cash: 586.81,
+            candidates: [],
+            orders: [
+              {
+                code: "600001",
+                name: "测试公司",
+                execution_price: 9.7,
+                shares: 2000,
+                total_cash: 19413.19,
+                grade: "A",
+                stop_price: 8.6,
+                pressure_target: 12,
+              },
+            ],
+          },
+          position_management: { orders: [] },
+        },
+        published_at: "2026-07-30T00:41:04+08:00",
+      }),
+    });
+  });
+  await page.route("**/api/core-strategy/portfolio/latest*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        snapshot: {
+          actual_date: displayedDate,
+          strategy_version: "core-strategy-v1",
+          initial_capital: 20000,
+          available_cash: 586.81,
+          net_asset_value: 19994.81,
+          positions: [
+            {
+              code: "600001",
+              name: "测试公司",
+              shares: 2000,
+              cost_price: 9.7,
+              stop_price: 8.6,
+              pressure_target: 12,
+              highest_close_since_entry: 9.704,
+              final_profit_line: null,
+              pending_exit_reason: null,
+            },
+          ],
+          marks: [
+            {
+              code: "600001",
+              price: 9.704,
+              mark_date: displayedDate,
+              source: "daily_close",
+            },
+          ],
+        },
+        published_at: "2026-07-30T00:41:04+08:00",
+      }),
+    });
+  });
+  await page.route("**/api/core-strategy/performance*", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    expect(requestUrl.searchParams.get("as_of_date")).toBe(requestedDate);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        requested_as_of_date: requestedDate,
+        actual_date: displayedDate,
+        strategy_version: "core-strategy-v1",
+        sample_count: 1,
+        initial_capital: 20000,
+        available_cash: 586.81,
+        holding_market_value: 19408,
+        net_asset_value: 19994.81,
+        daily_profit_loss: -5.19,
+        daily_return_pct: -0.02595,
+        cumulative_profit_loss: -5.19,
+        cumulative_return_pct: -0.02595,
+        statistics: {
+          annualized_return_pct: null,
+          annualized_return_unavailable_reason: "至少需要两个完整策略日",
+          max_drawdown_pct: 0,
+          current_drawdown_pct: 0,
+          sharpe_ratio: null,
+          sharpe_ratio_unavailable_reason: "至少需要两个日收益样本",
+          win_rate_pct: null,
+          win_rate_unavailable_reason: "至少需要一个可比较的日收益样本",
+        },
+        points: [
+          {
+            actual_date: displayedDate,
+            net_asset_value: 19994.81,
+            normalized_nav: 0.9997405,
+            daily_profit_loss: -5.19,
+            daily_return_pct: -0.02595,
+            cumulative_profit_loss: -5.19,
+            cumulative_return_pct: -0.02595,
+            drawdown_pct: 0,
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto(`/strategy?target_date=${requestedDate}`);
+
+  await expect(
+    page.getByRole("heading", { name: "唯一核心交易策略" }),
+  ).toBeVisible();
+  expect(requestedTodayStatus).toBe(true);
+  expect(requestedAnchoredDay).toBe(true);
+  await expect(page.getByText("请求日期 2026-07-30")).toBeVisible();
+  await expect(page.getByText("当前展示最近完整结果 2026-07-29")).toBeVisible();
+  const accountSummary = page.locator(
+    'section[aria-label="核心策略摘要"]',
+  );
+  await expect(accountSummary.getByText("基准本金", { exact: true })).toBeVisible();
+  await expect(accountSummary.getByText("可用现金", { exact: true })).toBeVisible();
+  await expect(accountSummary.getByText("持仓市值", { exact: true })).toBeVisible();
+  await expect(accountSummary.getByText("组合净资产", { exact: true })).toBeVisible();
+  await expect(accountSummary.getByText("¥586.81", { exact: true })).toBeVisible();
+  await expect(accountSummary.getByText("¥19,408.00", { exact: true })).toBeVisible();
+  await expect(accountSummary.getByText("¥19,994.81", { exact: true })).toBeVisible();
+  await expect(page.getByText("当日收益")).toBeVisible();
+  await expect(page.getByText("累计收益")).toBeVisible();
+  await expect(page.getByText("-0.03%", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("年化收益")).toBeVisible();
+  await expect(page.getByText("夏普比率")).toBeVisible();
+  await expect(page.getByText("至少需要两个完整策略日")).toBeVisible();
+  await expect(page.getByTestId("core-strategy-nav-chart")).toBeVisible();
+  await expect(page.getByTestId("core-strategy-drawdown-chart")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "当日订单" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "收盘后持仓" })).toBeVisible();
+  await expect(page.getByText("演示策略数据")).toHaveCount(0);
 });

@@ -6,6 +6,10 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from fourseasquant.core_strategy_performance import (
+    CoreStrategyPerformance,
+    read_core_strategy_performance,
+)
 from fourseasquant.core_strategy_repository import (
     PublishedCoreStrategyDaySnapshot,
     PublishedCoreStrategyPortfolioSnapshot,
@@ -177,6 +181,25 @@ def get_latest_core_strategy_portfolio(
     )
     if result is None:
         raise HTTPException(status_code=404, detail="没有可用的完整组合状态")
+    return result
+
+
+@router.get(
+    "/performance",
+    response_model=CoreStrategyPerformance,
+)
+def get_core_strategy_performance(
+    as_of_date: date,
+) -> CoreStrategyPerformance:
+    result = read_core_strategy_performance(
+        database_path(),
+        as_of_date=as_of_date,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="没有可用的真实组合绩效",
+        )
     return result
 
 

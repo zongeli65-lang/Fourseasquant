@@ -113,6 +113,7 @@ type HoldingPosition = {
 type PortfolioResponse = {
   snapshot: {
     actual_date: string;
+    strategy_version: string;
     initial_capital: number;
     available_cash: number;
     net_asset_value: number;
@@ -127,6 +128,43 @@ type PortfolioResponse = {
   published_at: string;
 };
 
+type PerformancePoint = {
+  actual_date: string;
+  net_asset_value: number;
+  normalized_nav: number;
+  daily_profit_loss: number;
+  daily_return_pct: number;
+  cumulative_profit_loss: number;
+  cumulative_return_pct: number;
+  drawdown_pct: number;
+};
+
+type PerformanceResponse = {
+  requested_as_of_date: string;
+  actual_date: string;
+  strategy_version: string;
+  sample_count: number;
+  initial_capital: number;
+  available_cash: number;
+  holding_market_value: number;
+  net_asset_value: number;
+  daily_profit_loss: number;
+  daily_return_pct: number;
+  cumulative_profit_loss: number;
+  cumulative_return_pct: number;
+  statistics: {
+    annualized_return_pct: number | null;
+    annualized_return_unavailable_reason: string | null;
+    max_drawdown_pct: number | null;
+    current_drawdown_pct: number | null;
+    sharpe_ratio: number | null;
+    sharpe_ratio_unavailable_reason: string | null;
+    win_rate_pct: number | null;
+    win_rate_unavailable_reason: string | null;
+  };
+  points: PerformancePoint[];
+};
+
 type LoadState =
   | { kind: "loading" }
   | {
@@ -134,6 +172,7 @@ type LoadState =
       status: RuntimeStatus;
       day: StrategyDayResponse | null;
       portfolio: PortfolioResponse | null;
+      performance: PerformanceResponse | null;
     }
   | { kind: "error"; message: string };
 
@@ -186,6 +225,46 @@ function percentage(value: number): string {
   return `${(value * 100).toFixed(0)}%`;
 }
 
+function performancePercentage(value: number | null): string {
+  if (value === null) return "—";
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value.toFixed(2)}%`;
+}
+
+function plainPercentage(value: number | null): string {
+  return value === null ? "—" : `${value.toFixed(2)}%`;
+}
+
+function decimal(value: number | null): string {
+  return value === null ? "—" : value.toFixed(2);
+}
+
+function chartPoints(
+  values: number[],
+  width: number,
+  height: number,
+  includeZero = false,
+): string {
+  if (values.length === 0) return "";
+  const domain = includeZero ? [...values, 0] : values;
+  const minimum = Math.min(...domain);
+  const maximum = Math.max(...domain);
+  const range = maximum - minimum;
+  return values
+    .map((value, index) => {
+      const x =
+        values.length === 1
+          ? width / 2
+          : (index / (values.length - 1)) * width;
+      const y =
+        range === 0
+          ? height / 2
+          : height - ((value - minimum) / range) * height;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
 function dateTime(value: string | null): string {
   if (!value) return "—";
   return new Date(value).toLocaleString("zh-CN", {
@@ -225,6 +304,7 @@ export function CoreStrategyPage({ targetDate }: { targetDate: string }) {
       const status = (await statusResponse.json()) as RuntimeStatus;
       let day: StrategyDayResponse | null = null;
       let portfolio: PortfolioResponse | null = null;
+      let performance: PerformanceResponse | null = null;
       if (status.stage === "finalized" && status.actual_date) {
         const [dayResponse, portfolioResponse] = await Promise.all([
           fetch(
@@ -248,7 +328,52 @@ export function CoreStrategyPage({ targetDate }: { targetDate: string }) {
           throw new Error(await errorDetail(portfolioResponse));
         }
       }
-      setState({ kind: "ready", status, day, portfolio });
+      if (status.account !== null && portfolio === null) {
+        const latestPortfolioResponse = await fetch(
+          `/api/core-strategy/portfolio/latest`
+          + `?as_of_date=${encodeURIComponent(targetDate)}`,
+          { signal },
+        );
+        if (latestPortfolioResponse.ok) {
+          portfolio =
+            (await latestPortfolioResponse.json()) as PortfolioResponse;
+          const latestDayResponse = await fetch(
+            `/api/core-strategy/days/`
+            + encodeURIComponent(portfolio.snapshot.actual_date)
+            + `?strategy_version=`
+            + encodeURIComponent(portfolio.snapshot.strategy_version),
+            { signal },
+          );
+          if (latestDayResponse.ok) {
+            const latestDay =
+              (await latestDayResponse.json()) as StrategyDayResponse;
+            if (
+              latestDay.snapshot.actual_date
+              === portfolio.snapshot.actual_date
+            ) {
+              day = latestDay;
+            }
+          } else if (latestDayResponse.status !== 404) {
+            throw new Error(await errorDetail(latestDayResponse));
+          }
+        } else if (latestPortfolioResponse.status !== 404) {
+          throw new Error(await errorDetail(latestPortfolioResponse));
+        }
+      }
+      if (status.account !== null) {
+        const performanceResponse = await fetch(
+          `/api/core-strategy/performance`
+          + `?as_of_date=${encodeURIComponent(targetDate)}`,
+          { signal },
+        );
+        if (performanceResponse.ok) {
+          performance =
+            (await performanceResponse.json()) as PerformanceResponse;
+        } else if (performanceResponse.status !== 404) {
+          throw new Error(await errorDetail(performanceResponse));
+        }
+      }
+      setState({ kind: "ready", status, day, portfolio, performance });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setState({
@@ -349,19 +474,133 @@ export function CoreStrategyPage({ targetDate }: { targetDate: string }) {
     );
   }
 
-  const { status, day, portfolio } = state;
+  const { status, day, portfolio, performance } = state;
   const buyOrders = day?.snapshot.entry_planning.orders ?? [];
   const sellOrders = day?.snapshot.position_management.orders ?? [];
   const positions = portfolio?.snapshot.positions ?? [];
   const markByCode = new Map(
     (portfolio?.snapshot.marks ?? []).map((mark) => [mark.code, mark]),
   );
+  const displayedDate =
+    portfolio?.snapshot.actual_date
+    ?? performance?.actual_date
+    ?? day?.snapshot.actual_date
+    ?? status.actual_date;
+  const displayedStrategyVersion =
+    day?.snapshot.strategy_version
+    ?? performance?.strategy_version
+    ?? status.strategy_version;
+  const isShowingPriorResult =
+    displayedDate !== null && displayedDate !== targetDate;
+  const markedPositionValues = positions.map((position) => {
+    const mark = markByCode.get(position.code);
+    return mark ? position.shares * mark.price : null;
+  });
+  const portfolioHoldingMarketValue =
+    markedPositionValues.every((value) => value !== null)
+      ? markedPositionValues.reduce<number>(
+          (total, value) => total + (value ?? 0),
+          0,
+        )
+      : null;
+  const baselineCapital =
+    performance?.initial_capital
+    ?? portfolio?.snapshot.initial_capital
+    ?? status.account?.initial_capital
+    ?? null;
+  const displayedAvailableCash =
+    performance?.available_cash
+    ?? portfolio?.snapshot.available_cash
+    ?? status.available_cash;
+  const displayedHoldingMarketValue =
+    performance?.holding_market_value
+    ?? portfolioHoldingMarketValue;
+  const displayedNetAssetValue =
+    performance?.net_asset_value
+    ?? portfolio?.snapshot.net_asset_value
+    ?? status.net_asset_value;
   const opinionFinished =
     status.opinion_jobs.succeeded
     + status.opinion_jobs.failed
     + status.opinion_jobs.blocked;
   const opinionTotal =
     opinionFinished + status.opinion_jobs.pending + status.opinion_jobs.running;
+  const performanceMetrics = performance
+    ? [
+        {
+          label: "当日收益",
+          value: performancePercentage(performance.daily_return_pct),
+          detail: `当日盈亏 ${money(performance.daily_profit_loss)}`,
+          raw: performance.daily_return_pct,
+        },
+        {
+          label: "累计收益",
+          value: performancePercentage(performance.cumulative_return_pct),
+          detail: `累计盈亏 ${money(performance.cumulative_profit_loss)}`,
+          raw: performance.cumulative_return_pct,
+        },
+        {
+          label: "年化收益",
+          value: performancePercentage(
+            performance.statistics.annualized_return_pct,
+          ),
+          detail:
+            performance.statistics.annualized_return_unavailable_reason
+            ?? "按完整策略日序列计算",
+          raw: performance.statistics.annualized_return_pct,
+        },
+        {
+          label: "最大回撤",
+          value: performancePercentage(
+            performance.statistics.max_drawdown_pct,
+          ),
+          detail: "成立以来峰值至谷值",
+          raw: performance.statistics.max_drawdown_pct,
+        },
+        {
+          label: "当前回撤",
+          value: performancePercentage(
+            performance.statistics.current_drawdown_pct,
+          ),
+          detail: "当前净值相对历史峰值",
+          raw: performance.statistics.current_drawdown_pct,
+        },
+        {
+          label: "夏普比率",
+          value: decimal(performance.statistics.sharpe_ratio),
+          detail:
+            performance.statistics.sharpe_ratio_unavailable_reason
+            ?? "日收益风险调整后表现",
+          raw: performance.statistics.sharpe_ratio,
+        },
+        {
+          label: "胜率",
+          value: plainPercentage(performance.statistics.win_rate_pct),
+          detail:
+            performance.statistics.win_rate_unavailable_reason
+            ?? "正收益完整策略日占比",
+          raw:
+            performance.statistics.win_rate_pct === null
+              ? null
+              : 0,
+        },
+      ]
+    : [];
+  const normalizedNavLine = performance
+    ? chartPoints(
+        performance.points.map((point) => point.normalized_nav),
+        1000,
+        180,
+      )
+    : "";
+  const drawdownLine = performance
+    ? chartPoints(
+        performance.points.map((point) => point.drawdown_pct),
+        1000,
+        120,
+        true,
+      )
+    : "";
 
   return (
     <div className="core-strategy-page">
@@ -373,17 +612,44 @@ export function CoreStrategyPage({ targetDate }: { targetDate: string }) {
         </div>
         <div className="core-strategy-hero__state">
           <span data-stage={status.stage}>{stageLabels[status.stage]}</span>
-          <small>
-            {status.actual_date ?? targetDate} · {status.strategy_version}
-          </small>
+          <small>请求日期 {targetDate}</small>
+          {isShowingPriorResult ? (
+            <strong>当前展示最近完整结果 {displayedDate}</strong>
+          ) : (
+            <strong>
+              {displayedDate
+                ? `实际结果 ${displayedDate}`
+                : "今日完整结果尚未发布"}
+            </strong>
+          )}
+          <small>{displayedStrategyVersion}</small>
         </div>
       </section>
 
       <section className="core-strategy-summary" aria-label="核心策略摘要">
         <article>
-          <span>账户初始资金</span>
-          <strong>{money(status.account?.initial_capital ?? null)}</strong>
-          <small>{status.account ? `初始化于 ${dateTime(status.account.initialized_at)}` : "等待用户设置"}</small>
+          <span>基准本金</span>
+          <strong>{money(baselineCapital)}</strong>
+          <small>
+            {status.account
+              ? `仅作收益计算基准；初始化于 ${dateTime(status.account.initialized_at)}`
+              : "等待用户设置"}
+          </small>
+        </article>
+        <article>
+          <span>可用现金</span>
+          <strong>{money(displayedAvailableCash)}</strong>
+          <small>{displayedDate ? `截至 ${displayedDate}` : "等待完整组合"}</small>
+        </article>
+        <article>
+          <span>持仓市值</span>
+          <strong>{money(displayedHoldingMarketValue)}</strong>
+          <small>{positions.length} 只持仓按收盘价标记</small>
+        </article>
+        <article>
+          <span>组合净资产</span>
+          <strong>{money(displayedNetAssetValue)}</strong>
+          <small>可用现金与持仓市值合计</small>
         </article>
         <article>
           <span>市场状态</span>
@@ -393,27 +659,127 @@ export function CoreStrategyPage({ targetDate }: { targetDate: string }) {
           <small>市场转换只改变新选股路径</small>
         </article>
         <article>
-          <span>初筛候选</span>
+          <span>请求日初筛候选</span>
           <strong>{status.candidate_count}</strong>
           <small>基本面调查目标 {status.fundamental_target_count}</small>
         </article>
         <article>
-          <span>舆论调查</span>
+          <span>请求日舆论调查</span>
           <strong>
             {opinionTotal > 0 ? `${opinionFinished} / ${opinionTotal}` : "0"}
           </strong>
           <small>仅策略前十目标进入新开仓调查</small>
         </article>
         <article>
-          <span>组合净值</span>
-          <strong>{money(status.net_asset_value)}</strong>
+          <span>完整结果</span>
+          <strong>{displayedDate ?? "—"}</strong>
           <small>
-            {status.portfolio_publication_complete
-              ? "完整组合已发布"
+            {portfolio
+              ? "组合已完整发布并连续继承"
               : "没有完整组合快照"}
           </small>
         </article>
       </section>
+
+      {performance && (
+        <section
+          className="core-strategy-performance"
+          aria-labelledby="core-strategy-performance-title"
+        >
+          <header>
+            <div>
+              <p className="section-kicker">真实组合 · 连续记账</p>
+              <h3 id="core-strategy-performance-title">策略收益与风险</h3>
+              <p>
+                每个完整策略日以上一日组合为起点连续计算，
+                基准本金不会被误作当前现金。
+              </p>
+            </div>
+            <div className="core-strategy-performance__meta">
+              <strong>截至 {performance.actual_date}</strong>
+              <span>{performance.sample_count} 个完整策略日</span>
+            </div>
+          </header>
+
+          <div className="core-strategy-performance__metrics">
+            {performanceMetrics.map((metric) => (
+              <article
+                key={metric.label}
+                data-tone={
+                  metric.raw === null
+                    ? "unavailable"
+                    : metric.raw > 0
+                      ? "positive"
+                      : metric.raw < 0
+                        ? "negative"
+                        : "neutral"
+                }
+              >
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+                <small>{metric.detail}</small>
+              </article>
+            ))}
+          </div>
+
+          <div className="core-strategy-performance__charts">
+            <article
+              className="core-strategy-performance__chart"
+              data-testid="core-strategy-nav-chart"
+            >
+              <header>
+                <h4>策略净值曲线</h4>
+                <strong>
+                  {performance.points.at(-1)?.normalized_nav.toFixed(4) ?? "—"}
+                </strong>
+              </header>
+              <svg
+                viewBox="0 0 1000 180"
+                preserveAspectRatio="none"
+                aria-label="核心策略净值曲线"
+              >
+                <polyline points={normalizedNavLine} />
+                {performance.points.length === 1 && (
+                  <circle cx="500" cy="90" r="6" />
+                )}
+              </svg>
+              <footer>
+                <span>{performance.points[0]?.actual_date ?? "—"}</span>
+                <span>
+                  {performance.points.at(-1)?.actual_date ?? "—"}
+                </span>
+              </footer>
+            </article>
+            <article
+              className="core-strategy-performance__chart core-strategy-performance__chart--drawdown"
+              data-testid="core-strategy-drawdown-chart"
+            >
+              <header>
+                <h4>回撤曲线</h4>
+                <strong>
+                  {performancePercentage(
+                    performance.statistics.current_drawdown_pct,
+                  )}
+                </strong>
+              </header>
+              <svg
+                viewBox="0 0 1000 120"
+                preserveAspectRatio="none"
+                aria-label="核心策略回撤曲线"
+              >
+                <polyline points={drawdownLine} />
+                {performance.points.length === 1 && (
+                  <circle cx="500" cy="60" r="6" />
+                )}
+              </svg>
+              <footer>
+                <span>峰值为 0%</span>
+                <span>越低表示回撤越深</span>
+              </footer>
+            </article>
+          </div>
+        </section>
+      )}
 
       {feedback && (
         <p className="core-strategy-feedback" role="status" aria-live="polite">
@@ -525,27 +891,28 @@ export function CoreStrategyPage({ targetDate }: { targetDate: string }) {
         </section>
       )}
 
-      {status.stage === "finalized" && day && (
+      {day && (
         <>
           <section className="core-strategy-publication">
             <div>
               <span>可用现金</span>
-              <strong>{money(status.available_cash)}</strong>
+              <strong>{money(displayedAvailableCash)}</strong>
             </div>
             <div>
               <span>当前持仓</span>
-              <strong>{status.holding_count}</strong>
+              <strong>{positions.length}</strong>
             </div>
             <div>
               <span>当日订单</span>
-              <strong>{status.order_count}</strong>
+              <strong>{buyOrders.length + sellOrders.length}</strong>
             </div>
             <div>
               <span>最大持股数</span>
               <strong>{day.snapshot.entry_planning.maximum_positions}</strong>
             </div>
             <small>
-              发布于 {dateTime(status.finalized_at)}；所有订单均为日线导入后的模拟成交。
+              结果日 {day.snapshot.actual_date}；发布于{" "}
+              {dateTime(day.published_at)}；所有订单均为日线导入后的模拟成交。
             </small>
           </section>
 
