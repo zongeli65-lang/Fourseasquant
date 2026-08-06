@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 const snapshot = {
-  schema_version: "market-environment-snapshot-v1",
+  schema_version: "market-environment-snapshot-v2",
   actual_data_date: "2026-07-24",
-  rules_version: "market-environment-v1",
+  rules_version: "market-environment-contextual-momentum-v8",
   trend_id: "market-env-2026-07-22-sideways",
   trend_state: "sideways",
   trend_changed: false,
@@ -14,6 +14,28 @@ const snapshot = {
   fast_bear_streak: 0,
   sideways_streak: 4,
   extreme_decline: false,
+  contextual_momentum: {
+    baseline_state: "rising",
+    momentum_phase: "bullish_exhaustion",
+    momentum_event: "top_exhaustion",
+    prior_directional_streak: 8,
+    prior_move_atr: 4.8,
+    prior_directional_event_count: 3,
+    overextended_context: "bullish",
+    reversal_candidate: "bearish",
+    candidate_age: 0,
+    strong_reversal_verified: false,
+    contextual_takeover: false,
+    active_override: null,
+    released_to_sideways: false,
+    close_impulse_atr: -0.4,
+    body_impulse_atr: -0.55,
+    close_location: -0.6,
+    advancing_index_count: 0,
+    declining_index_count: 5,
+    bullish_one_atr_count: 0,
+    bearish_one_atr_count: 2,
+  },
   indices: [
     {
       code: "sh000001",
@@ -89,6 +111,9 @@ const snapshot = {
   data_sources: [
     "akshare_index_sh000001",
     "akshare_index_sz399001",
+    "akshare_index_sh000300",
+    "akshare_index_sz399006",
+    "akshare_index_sh000688",
     "akshare_sina_daily",
   ],
   generated_at: "2026-07-24T16:30:00+08:00",
@@ -110,7 +135,7 @@ test("市场环境板块独立展示机械趋势和证据", async ({ page }) => 
       contentType: "application/json",
       body: JSON.stringify({
         requested_end_date: "2026-07-24",
-        rules_version: "market-environment-v1",
+        rules_version: "market-environment-contextual-momentum-v8",
         items: [
           {
             ...snapshot,
@@ -149,7 +174,7 @@ test("市场环境板块独立展示机械趋势和证据", async ({ page }) => 
         run_id: "market-env-run-test",
         requested_date: "2026-07-24",
         actual_data_date: "2026-07-24",
-        rules_version: "market-environment-v1",
+        rules_version: "market-environment-contextual-momentum-v8",
         inserted_count: 0,
         snapshot_count: 283,
         completed_at: "2026-07-27T13:00:00+08:00",
@@ -166,6 +191,8 @@ test("市场环境板块独立展示机械趋势和证据", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "深证成指" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "广度弱" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "容量不足" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "多头衰竭" })).toBeVisible();
+  await expect(page.getByText("第八版 · 五指数动能与趋势背景已计算")).toBeVisible();
   await expect(page.getByText("仅展示，不改判")).toBeVisible();
   await expect(page.getByRole("heading", { name: "市场环境历史标注" })).toBeVisible();
   const yearSection = page.locator(".market-environment-year");

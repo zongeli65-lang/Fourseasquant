@@ -5,7 +5,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fourseasquant.akshare_history import HISTORY_QFQ_SOURCE
 from fourseasquant.candle_refresh import refresh_one_year_candles
 from fourseasquant.daily_snapshots import (
     PreparedMarket,
@@ -28,6 +27,7 @@ def execute_daily_task_with_candles(
     *,
     path: Path | None = None,
     trigger_method: TaskTrigger = "manual",
+    started_at: datetime | None = None,
 ) -> TaskRunResponse:
     selected_path = path or database_path()
 
@@ -36,12 +36,11 @@ def execute_daily_task_with_candles(
             run_path,
             requested_end_date=run_date,
         )
-        qfq_source = f"{HISTORY_QFQ_SOURCE}:{run_date.isoformat()}"
         staged = score_technical_history(
             run_path,
             official_start=_one_year_start(refreshed.actual_data_date),
             official_end=refreshed.actual_data_date,
-            qfq_source=qfq_source,
+            qfq_source=refreshed.qfq_source,
             version=ALGORITHM_VERSION,
             activate=False,
         )
@@ -65,6 +64,7 @@ def execute_daily_task_with_candles(
         market_stage_factory=prepare_market,
         trigger_method=trigger_method,
         propagate_unexpected=False,
+        started_at=started_at,
     )
     if result.status == "succeeded":
         try:

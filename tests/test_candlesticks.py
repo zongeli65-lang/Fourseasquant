@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from fourseasquant.akshare_history import HISTORY_QFQ_SOURCE, HISTORY_SOURCE
 from fourseasquant.candlesticks import (
     INDEXES,
+    CandleDataNotFound,
     index_source,
+    promote_incremental_candle_date,
     publish_complete_candle_dates,
     read_candle_series,
     search_eligible_securities,
@@ -126,3 +131,142 @@ def test_no_publication_hides_partial_dataset(tmp_path: Path) -> None:
     assert search_eligible_securities(
         path, query="600000", requested_date=date(2026, 7, 22)
     ) == []
+
+
+def test_incremental_promotion_appends_to_rolling_qfq_source(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "incremental.db"
+    _seed(path)
+    target_date = date(2026, 7, 30)
+    raw_staging = "raw:attempt"
+    qfq_staging = "qfq:attempt"
+    version_tag = "2026-07-30:attempt"
+    target_fact = HistoricalSecurityFactRow(
+        actual_data_date=target_date,
+        code="600000",
+        name="浦发银行",
+        open=12,
+        high=13,
+        low=11,
+        close=12.5,
+        previous_close=11.5,
+        change_pct=8.7,
+        volume=200,
+        turnover_cny=2_000,
+        listing_trading_days=200,
+    )
+    for source in (raw_staging, qfq_staging):
+        save_history_symbol_batch(
+            path,
+            source=source,
+            range_start=target_date,
+            range_end=target_date,
+            code="600000",
+            facts=[target_fact],
+            completed_at=datetime.now(ZoneInfo("Asia/Shanghai")),
+        )
+    for symbol, name in INDEXES.items():
+        save_historical_benchmark_fact(
+            path,
+            source=index_source(symbol, version_tag=version_tag),
+            fact=HistoricalBenchmarkFactRow(
+                actual_data_date=target_date,
+                name=name,
+                open=3_000,
+                high=3_010,
+                low=2_990,
+                close=3_005,
+                volume=100_000_000,
+            ),
+        )
+
+    published = promote_incremental_candle_date(
+        path,
+        raw_staging_source=raw_staging,
+        qfq_staging_source=qfq_staging,
+        qfq_source=HISTORY_QFQ_SOURCE,
+        index_version_tag=version_tag,
+        target_date=target_date,
+    )
+
+    with sqlite3.connect(path) as connection:
+        qfq_rows = connection.execute(
+            """
+            SELECT actual_data_date, close
+            FROM historical_security_facts
+            WHERE source = ?
+            ORDER BY actual_data_date
+            """,
+            (HISTORY_QFQ_SOURCE,),
+        ).fetchall()
+        publication = connection.execute(
+            """
+            SELECT qfq_source FROM candle_dataset_publications
+            WHERE actual_data_date = ?
+            """,
+            (target_date.isoformat(),),
+        ).fetchone()
+    assert published == 1
+    assert qfq_rows[-1] == ("2026-07-30", 12.5)
+    assert len(qfq_rows) == 17
+    assert publication == (HISTORY_QFQ_SOURCE,)
+
+
+def test_incremental_promotion_rolls_back_when_indexes_are_incomplete(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "incremental-rollback.db"
+    _seed(path)
+    target_date = date(2026, 7, 30)
+    target_fact = HistoricalSecurityFactRow(
+        actual_data_date=target_date,
+        code="600000",
+        name="浦发银行",
+        open=12,
+        high=13,
+        low=11,
+        close=12.5,
+        previous_close=11.5,
+        change_pct=8.7,
+        volume=200,
+        turnover_cny=2_000,
+        listing_trading_days=200,
+    )
+    for source in ("raw:attempt", "qfq:attempt"):
+        save_history_symbol_batch(
+            path,
+            source=source,
+            range_start=target_date,
+            range_end=target_date,
+            code="600000",
+            facts=[target_fact],
+            completed_at=datetime.now(ZoneInfo("Asia/Shanghai")),
+        )
+
+    with pytest.raises(CandleDataNotFound, match="指数日线"):
+        promote_incremental_candle_date(
+            path,
+            raw_staging_source="raw:attempt",
+            qfq_staging_source="qfq:attempt",
+            qfq_source=HISTORY_QFQ_SOURCE,
+            index_version_tag="missing-indexes",
+            target_date=target_date,
+        )
+
+    with sqlite3.connect(path) as connection:
+        published_rows = connection.execute(
+            """
+            SELECT source, COUNT(*)
+            FROM historical_security_facts
+            WHERE actual_data_date = ?
+              AND source IN (?, ?)
+            GROUP BY source
+            """,
+            (
+                target_date.isoformat(),
+                HISTORY_SOURCE,
+                HISTORY_QFQ_SOURCE,
+            ),
+        ).fetchall()
+    assert published_rows == []

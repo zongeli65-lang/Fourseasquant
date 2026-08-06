@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime, timedelta
+from math import pi, sin
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,7 +26,20 @@ START = date(2026, 1, 1)
 def _seed_market(database: Path, *, crash_last_day: bool = False) -> date:
     index_rows: list[tuple[object, ...]] = []
     security_rows: list[tuple[object, ...]] = []
-    prices = {"sh000001": 3000.0, "sz399001": 10000.0}
+    prices = {
+        "sh000001": 3000.0,
+        "sz399001": 10000.0,
+        "sh000300": 4000.0,
+        "sz399006": 2200.0,
+        "sh000688": 1000.0,
+    }
+    index_names = {
+        "sh000001": "上证指数",
+        "sz399001": "深证成指",
+        "sh000300": "沪深300",
+        "sz399006": "创业板指",
+        "sh000688": "科创50",
+    }
     stock_prices = {
         "600001": 10.0,
         "601001": 12.0,
@@ -38,19 +52,22 @@ def _seed_market(database: Path, *, crash_last_day: bool = False) -> date:
         "000001": "深市一号",
         "002001": "深市二号",
     }
-    for offset in range(45):
+    for offset in range(101):
         trading_date = START + timedelta(days=offset)
-        final_crash = crash_last_day and offset == 44
-        for code, name in (("sh000001", "上证指数"), ("sz399001", "深证成指")):
-            previous = prices[code]
-            growth = (
-                -0.10
-                if final_crash
-                else 0.01
-                if offset >= 20
-                else 0.0005
+        final_crash = crash_last_day and offset == 100
+        index_growth = (
+            -0.10
+            if final_crash
+            else 0.006
+            + 0.02
+            * (
+                sin(offset * 2 * pi / 8)
+                - sin((offset - 1) * 2 * pi / 8)
             )
-            close = previous * (1 + growth)
+        )
+        for code, name in index_names.items():
+            previous = prices[code]
+            close = previous * (1 + index_growth)
             prices[code] = close
             index_rows.append(
                 (
@@ -108,7 +125,7 @@ def _seed_market(database: Path, *, crash_last_day: bool = False) -> date:
             """,
             security_rows,
         )
-    return START + timedelta(days=44)
+    return START + timedelta(days=100)
 
 
 def test_refresh_publishes_versioned_history_without_technical_scores(
@@ -141,9 +158,17 @@ def test_refresh_publishes_versioned_history_without_technical_scores(
     assert first.inserted_count == first.snapshot_count
     assert second.inserted_count == 0
     assert snapshot.rules_version == RULES_VERSION
+    assert snapshot.schema_version == "market-environment-snapshot-v2"
+    assert len(snapshot.data_sources) == 6
+    assert snapshot.contextual_momentum.baseline_state in {
+        "rising",
+        "falling",
+        "sideways",
+    }
     assert snapshot.trend_state == "rising"
-    assert snapshot.validation_state == "validated"
-    assert all(item.fast_direction == "bullish" for item in snapshot.indices)
+    assert snapshot.validation_state == "not_required"
+    assert snapshot.contextual_momentum.baseline_state == "rising"
+    assert snapshot.contextual_momentum.momentum_phase == "bullish_impulse"
     assert snapshot.breadth.state == "strong"
     assert history.items[-1] == snapshot
     assert all("technical" not in source for source in snapshot.data_sources)
@@ -164,6 +189,8 @@ def test_extreme_decline_can_switch_state_on_the_same_day(
 
     assert snapshot.trend_state == "falling"
     assert snapshot.trend_changed is True
+    assert snapshot.contextual_momentum.contextual_takeover is True
+    assert snapshot.contextual_momentum.strong_reversal_verified is True
     assert snapshot.extreme_decline is True
     assert snapshot.breadth.state == "weak"
 

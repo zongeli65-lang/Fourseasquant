@@ -246,6 +246,89 @@ def promote_staged_candle_dates(
             return published
 
 
+def promote_incremental_candle_date(
+    path: Path,
+    *,
+    raw_staging_source: str,
+    qfq_staging_source: str,
+    qfq_source: str,
+    index_version_tag: str,
+    target_date: date,
+    published_at: datetime | None = None,
+) -> int:
+    publication_time = published_at or datetime.now(ZoneInfo("Asia/Shanghai"))
+    with open_database_connection(path) as connection:
+        with connection:
+            _replace_security_source_range(
+                connection,
+                staging_source=raw_staging_source,
+                published_source=HISTORY_SOURCE,
+                range_start=target_date,
+                range_end=target_date,
+            )
+            _merge_security_source(
+                connection,
+                staging_source=qfq_staging_source,
+                published_source=qfq_source,
+            )
+            for symbol in INDEXES:
+                _replace_benchmark_source_range(
+                    connection,
+                    staging_source=index_source(
+                        symbol,
+                        version_tag=index_version_tag,
+                    ),
+                    published_source=index_source(symbol),
+                    required_end=target_date,
+                )
+            _replace_benchmark_source_range(
+                connection,
+                staging_source=index_source(
+                    "sh000300",
+                    version_tag=index_version_tag,
+                ),
+                published_source=HISTORY_SOURCE,
+                required_end=target_date,
+            )
+            _replace_historical_market_summaries(
+                connection,
+                publication_start=target_date,
+                range_end=target_date,
+            )
+            connection.execute(
+                """
+                DELETE FROM candle_dataset_publications
+                WHERE actual_data_date = ?
+                """,
+                (target_date.isoformat(),),
+            )
+            published = _publish_complete_candle_dates(
+                connection,
+                qfq_source=qfq_source,
+                published_at=publication_time,
+                publication_start=target_date,
+            )
+            target_publication = connection.execute(
+                """
+                SELECT qfq_source
+                FROM candle_dataset_publications
+                WHERE actual_data_date = ?
+                """,
+                (target_date.isoformat(),),
+            ).fetchone()
+            if target_publication != (qfq_source,):
+                raise CandleDataNotFound(
+                    "股票与五指数未形成目标日期完整增量 K 线版本"
+                )
+            _discard_staged_candle_attempt(
+                connection,
+                raw_staging_source=raw_staging_source,
+                qfq_staging_source=qfq_staging_source,
+                index_version_tag=index_version_tag,
+            )
+            return published
+
+
 def discard_staged_candle_attempt(
     path: Path,
     *,
@@ -348,6 +431,51 @@ def _replace_security_source_range(
         WHERE source = ? AND range_start = ? AND range_end = ?
         """,
         (published_source, staging_source, start, end),
+    )
+
+
+def _merge_security_source(
+    connection: sqlite3.Connection,
+    *,
+    staging_source: str,
+    published_source: str,
+) -> None:
+    staged_count = int(
+        connection.execute(
+            """
+            SELECT COUNT(*) FROM historical_security_facts
+            WHERE source = ?
+            """,
+            (staging_source,),
+        ).fetchone()[0]
+    )
+    if staged_count == 0:
+        raise CandleDataNotFound("待合并股票日线版本为空")
+    connection.execute(
+        """
+        INSERT INTO historical_security_facts (
+            source, actual_data_date, code, name, open, high, low, close,
+            previous_close, change_pct, volume, turnover_cny,
+            listing_trading_days
+        )
+        SELECT ?, actual_data_date, code, name, open, high, low, close,
+               previous_close, change_pct, volume, turnover_cny,
+               listing_trading_days
+        FROM historical_security_facts
+        WHERE source = ?
+        ON CONFLICT(source, actual_data_date, code) DO UPDATE SET
+            name = excluded.name,
+            open = excluded.open,
+            high = excluded.high,
+            low = excluded.low,
+            close = excluded.close,
+            previous_close = excluded.previous_close,
+            change_pct = excluded.change_pct,
+            volume = excluded.volume,
+            turnover_cny = excluded.turnover_cny,
+            listing_trading_days = excluded.listing_trading_days
+        """,
+        (published_source, staging_source),
     )
 
 
