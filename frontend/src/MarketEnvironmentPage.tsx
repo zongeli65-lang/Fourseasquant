@@ -34,6 +34,34 @@ type Warning = {
   invalidation_level: number;
 };
 
+type ContextualMomentum = {
+  baseline_state: TrendState;
+  momentum_phase:
+    | "bullish_impulse"
+    | "bullish_exhaustion"
+    | "bearish_impulse"
+    | "bearish_exhaustion"
+    | "balance";
+  momentum_event: string;
+  prior_directional_streak: number;
+  prior_move_atr: number;
+  prior_directional_event_count: number;
+  overextended_context: "bullish" | "bearish" | null;
+  reversal_candidate: "bullish" | "bearish" | null;
+  candidate_age: number;
+  strong_reversal_verified: boolean;
+  contextual_takeover: boolean;
+  active_override: "bullish" | "bearish" | null;
+  released_to_sideways: boolean;
+  close_impulse_atr: number;
+  body_impulse_atr: number;
+  close_location: number;
+  advancing_index_count: number;
+  declining_index_count: number;
+  bullish_one_atr_count: number;
+  bearish_one_atr_count: number;
+};
+
 type MarketEnvironmentSnapshot = {
   actual_data_date: string;
   rules_version: string;
@@ -47,6 +75,7 @@ type MarketEnvironmentSnapshot = {
   fast_bear_streak: number;
   sideways_streak: number;
   extreme_decline: boolean;
+  contextual_momentum: ContextualMomentum;
   indices: IndexEvidence[];
   breadth: {
     state: "strong" | "neutral" | "weak";
@@ -134,6 +163,14 @@ const capacityLabels = {
   insufficient: "容量不足",
 } as const;
 
+const phaseLabels: Record<ContextualMomentum["momentum_phase"], string> = {
+  bullish_impulse: "多头推动",
+  bullish_exhaustion: "多头衰竭",
+  bearish_impulse: "空头推动",
+  bearish_exhaustion: "空头衰竭",
+  balance: "动能平衡",
+};
+
 function percentage(value: number): string {
   return `${value.toFixed(2)}%`;
 }
@@ -147,6 +184,9 @@ function money(value: number): string {
 }
 
 function validationCopy(snapshot: MarketEnvironmentSnapshot): string {
+  if (snapshot.rules_version === "market-environment-contextual-momentum-v8") {
+    return "第八版 · 五指数动能与趋势背景已计算";
+  }
   if (snapshot.validation_state === "validated") return "慢速结构已验证";
   if (snapshot.validation_state === "pending") {
     return `等待慢速验证${snapshot.validation_deadline ? ` · 截止 ${snapshot.validation_deadline}` : ""}`;
@@ -373,6 +413,28 @@ export function MarketEnvironmentPage({ targetDate }: { targetDate: string }) {
 
       <section className="market-environment-factors">
         <article>
+          <p className="section-kicker">第八版正式判定</p>
+          <h3>{phaseLabels[snapshot.contextual_momentum.momentum_phase]}</h3>
+          <strong>{snapshot.contextual_momentum.body_impulse_atr.toFixed(2)} ATR</strong>
+          <span>五指数平均实体动能</span>
+          <dl>
+            <div>
+              <dt>稳定基线</dt>
+              <dd>{trendLabels[snapshot.contextual_momentum.baseline_state]}</dd>
+            </div>
+            <div>
+              <dt>上涨 / 下跌指数</dt>
+              <dd>
+                {snapshot.contextual_momentum.advancing_index_count} / {snapshot.contextual_momentum.declining_index_count}
+              </dd>
+            </div>
+            <div>
+              <dt>上下文接管</dt>
+              <dd>{snapshot.contextual_momentum.contextual_takeover ? "已确认" : "未触发"}</dd>
+            </div>
+          </dl>
+        </article>
+        <article>
           <p className="section-kicker">市场广度</p>
           <h3>{breadthLabels[snapshot.breadth.state]}</h3>
           <strong>{percentage(snapshot.breadth.advancer_ratio)}</strong>
@@ -414,10 +476,7 @@ export function MarketEnvironmentPage({ targetDate }: { targetDate: string }) {
           <ul>
             {snapshot.reasons.map((reason) => <li key={reason}>{reason}</li>)}
           </ul>
-          <small>
-            快速看涨连续 {snapshot.fast_bull_streak} 日 · 快速看跌连续{" "}
-            {snapshot.fast_bear_streak} 日 · 中性连续 {snapshot.sideways_streak} 日
-          </small>
+          <small>快速层、市场广度和旧形态只作辅助展示；正式状态由第八版上下文动能链路决定。</small>
         </article>
         <article className="market-environment-warnings">
           <header>

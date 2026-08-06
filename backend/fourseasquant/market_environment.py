@@ -15,11 +15,16 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fourseasquant._market_regime_v8_structure import MarketBar
+from fourseasquant.market_regime_v8 import (
+    INDEX_NAMES as V8_INDEX_NAMES,
+    calculate_market_regime_v8,
+)
 from fourseasquant.sqlite_connection import open_database_connection
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 HISTORY_SOURCE = "akshare_sina_daily"
-RULES_VERSION = "market-environment-v1"
+RULES_VERSION = "market-environment-contextual-momentum-v8"
 FAST_RETURN_THRESHOLD = 0.50
 FAST_SLOPE_THRESHOLD = 0.08
 SWING_LEFT = 3
@@ -32,6 +37,23 @@ QualityState = Literal["strong", "neutral", "weak"]
 CapacityState = Literal["abundant", "normal", "insufficient"]
 ValidationState = Literal["pending", "validated", "not_required"]
 WarningDirection = Literal["risk", "support"]
+MomentumPhase = Literal[
+    "bullish_impulse",
+    "bullish_exhaustion",
+    "bearish_impulse",
+    "bearish_exhaustion",
+    "balance",
+]
+MomentumEvent = Literal[
+    "bullish_shock",
+    "bearish_shock",
+    "top_exhaustion",
+    "bottom_exhaustion",
+    "bullish_impulse",
+    "bearish_impulse",
+    "balance",
+    "none",
+]
 
 
 def index_source(symbol: str) -> str:
@@ -111,10 +133,37 @@ class MarketEnvironmentWarning(BaseModel):
     invalidation_level: float
 
 
+class ContextualMomentumEvidence(BaseModel):
+    """第八版正式判定证据；旧快速、广度和形态字段仅作辅助展示。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    baseline_state: TrendState
+    momentum_phase: MomentumPhase
+    momentum_event: MomentumEvent
+    prior_directional_streak: int = Field(ge=0)
+    prior_move_atr: float
+    prior_directional_event_count: int = Field(ge=0)
+    overextended_context: Literal["bullish", "bearish"] | None
+    reversal_candidate: Literal["bullish", "bearish"] | None
+    candidate_age: int = Field(ge=0)
+    strong_reversal_verified: bool
+    contextual_takeover: bool
+    active_override: Literal["bullish", "bearish"] | None
+    released_to_sideways: bool
+    close_impulse_atr: float
+    body_impulse_atr: float
+    close_location: float
+    advancing_index_count: int = Field(ge=0, le=5)
+    declining_index_count: int = Field(ge=0, le=5)
+    bullish_one_atr_count: int = Field(ge=0, le=5)
+    bearish_one_atr_count: int = Field(ge=0, le=5)
+
+
 class MarketEnvironmentSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["market-environment-snapshot-v1"]
+    schema_version: Literal["market-environment-snapshot-v2"]
     actual_data_date: date
     rules_version: str
     trend_id: str
@@ -127,6 +176,7 @@ class MarketEnvironmentSnapshot(BaseModel):
     fast_bear_streak: int = Field(ge=0)
     sideways_streak: int = Field(ge=0)
     extreme_decline: bool
+    contextual_momentum: ContextualMomentumEvidence
     indices: list[IndexTrendEvidence] = Field(min_length=2, max_length=2)
     breadth: MarketBreadthEvidence
     capacity: MarketCapacityEvidence
@@ -393,10 +443,28 @@ def replay_market_environment(
         code: _calculate_index_days(code, name, bars)
         for code, (name, bars) in index_bars.items()
     }
+    v8_days = calculate_market_regime_v8(
+        {
+            code: [
+                MarketBar(
+                    trading_date=bar.trading_date,
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    volume=bar.volume,
+                )
+                for bar in bars
+            ]
+            for code, (_, bars) in index_bars.items()
+        }
+    )
+    v8_by_date = {item.trading_date: item for item in v8_days}
     common_dates = sorted(
         set(index_days["sh000001"])
         & set(index_days["sz399001"])
         & set(breadth_by_date)
+        & set(v8_by_date)
     )
     all_breadth_days = [
         breadth_by_date[value] for value in sorted(breadth_by_date)
@@ -408,8 +476,6 @@ def replay_market_environment(
     bull_streak = 0
     bear_streak = 0
     sideways_streak = 0
-    validation_state: ValidationState = "not_required"
-    validation_deadline_index: int | None = None
     warning_triggers: list[_WarningTrigger] = []
 
     for sequence_index, trading_date in enumerate(common_dates):
@@ -422,6 +488,7 @@ def replay_market_environment(
         warning_triggers.extend(sz_day.warnings)
         breadth = _breadth_evidence(breadth_history)
         capacity = _capacity_evidence(breadth_history)
+        contextual = v8_by_date[trading_date]
         directions = (
             sh_day.evidence.fast_direction,
             sz_day.evidence.fast_direction,
@@ -432,7 +499,6 @@ def replay_market_environment(
             and capacity.state != "insufficient"
         )
         combined_bear = directions == ("bearish", "bearish")
-        disagreement = set(directions) == {"bullish", "bearish"}
         bull_streak = bull_streak + 1 if combined_bull else 0
         bear_streak = bear_streak + 1 if combined_bear else 0
         sideways_signal = not combined_bull and not combined_bear
@@ -441,68 +507,17 @@ def replay_market_environment(
             breadth_history,
             breadth=breadth,
         )
-        next_state = state
-        reasons: list[str] = []
-        if extreme:
-            next_state = "falling"
-            reasons.append("沪深指数同时快速看跌，且极端抛售压力至少两项成立")
-        elif disagreement:
-            next_state = "sideways"
-            reasons.append("上证与深证快速方向实质分歧，按震荡处理")
-        elif bear_streak >= 2:
-            next_state = "falling"
-            reasons.append("沪深指数连续两日同时快速看跌")
-        elif bull_streak >= 2:
-            next_state = "rising"
-            reasons.append("沪深指数连续两日同时快速看涨，广度和容量未否定")
-        elif sideways_streak >= 2:
-            next_state = "sideways"
-            reasons.append("快速方向连续两日未形成一致上升或下降")
-
+        next_state = contextual.state
+        reasons = [contextual.reason]
         trend_changed = trend_start is None or next_state != state
         if trend_changed:
             state = next_state
             trend_start = trading_date
             trend_id = f"market-env-{trading_date.isoformat()}-{state}"
-            if state == "rising":
-                validation_state = "pending"
-                validation_deadline_index = sequence_index + 5
-            else:
-                validation_state = "not_required"
-                validation_deadline_index = None
-
-        if state == "rising":
-            slow_valid = _slow_rise_validated(
-                sh_day.evidence,
-                sz_day.evidence,
-                breadth=breadth,
-            )
-            if slow_valid:
-                validation_state = "validated"
-                validation_deadline_index = None
-                reasons.append("至少一个指数慢速证据三取二，另一指数未看跌")
-            elif (
-                validation_state == "pending"
-                and validation_deadline_index is not None
-                and sequence_index > validation_deadline_index
-            ):
-                state = "sideways"
-                trend_changed = True
-                trend_start = trading_date
-                trend_id = f"market-env-{trading_date.isoformat()}-sideways"
-                validation_state = "not_required"
-                validation_deadline_index = None
-                reasons.append("快速上升五个交易日内未获慢速结构验证")
 
         if trend_start is None:
             trend_start = trading_date
             trend_id = f"market-env-{trading_date.isoformat()}-{state}"
-        deadline = (
-            common_dates[validation_deadline_index]
-            if validation_deadline_index is not None
-            and validation_deadline_index < len(common_dates)
-            else None
-        )
         active_warnings = _active_warnings(
             warning_triggers,
             trading_date=trading_date,
@@ -516,19 +531,53 @@ def replay_market_environment(
             )
         snapshots.append(
             MarketEnvironmentSnapshot(
-                schema_version="market-environment-snapshot-v1",
+                schema_version="market-environment-snapshot-v2",
                 actual_data_date=trading_date,
                 rules_version=RULES_VERSION,
                 trend_id=trend_id,
                 trend_state=state,
                 trend_changed=trend_changed,
                 trend_start_date=trend_start,
-                validation_state=validation_state,
-                validation_deadline=deadline,
+                validation_state="not_required",
+                validation_deadline=None,
                 fast_bull_streak=bull_streak,
                 fast_bear_streak=bear_streak,
                 sideways_streak=sideways_streak,
                 extreme_decline=extreme,
+                contextual_momentum=ContextualMomentumEvidence(
+                    baseline_state=contextual.baseline_state,
+                    momentum_phase=contextual.phase,
+                    momentum_event=contextual.event,
+                    prior_directional_streak=contextual.prior_directional_streak,
+                    prior_move_atr=round(contextual.prior_move_atr, 6),
+                    prior_directional_event_count=(
+                        contextual.prior_directional_event_count
+                    ),
+                    overextended_context=contextual.overextended_context,
+                    reversal_candidate=contextual.reversal_candidate,
+                    candidate_age=contextual.candidate_age,
+                    strong_reversal_verified=(
+                        contextual.strong_reversal_verified
+                    ),
+                    contextual_takeover=contextual.contextual_takeover,
+                    active_override=contextual.active_override,
+                    released_to_sideways=contextual.released_to_sideways,
+                    close_impulse_atr=round(
+                        contextual.evidence.close_impulse_atr, 6
+                    ),
+                    body_impulse_atr=round(
+                        contextual.evidence.body_impulse_atr, 6
+                    ),
+                    close_location=round(contextual.evidence.close_location, 6),
+                    advancing_index_count=contextual.evidence.advancing_count,
+                    declining_index_count=contextual.evidence.declining_count,
+                    bullish_one_atr_count=(
+                        contextual.evidence.bullish_one_atr_count
+                    ),
+                    bearish_one_atr_count=(
+                        contextual.evidence.bearish_one_atr_count
+                    ),
+                ),
                 indices=[sh_day.evidence, sz_day.evidence],
                 breadth=breadth,
                 capacity=capacity,
@@ -539,8 +588,7 @@ def replay_market_environment(
                 warnings=active_warnings,
                 reasons=reasons or ["沿用上一交易日市场环境状态"],
                 data_sources=[
-                    index_source("sh000001"),
-                    index_source("sz399001"),
+                    *(index_source(code) for code in V8_INDEX_NAMES),
                     HISTORY_SOURCE,
                 ],
                 generated_at=(
@@ -562,7 +610,7 @@ def _load_index_bars(
     requested_date: date,
 ) -> dict[str, tuple[str, list[_IndexBar]]]:
     result: dict[str, tuple[str, list[_IndexBar]]] = {}
-    for code, name in (("sh000001", "上证指数"), ("sz399001", "深证成指")):
+    for code, name in V8_INDEX_NAMES.items():
         with open_database_connection(path) as connection:
             rows = connection.execute(
                 """
@@ -925,7 +973,7 @@ def _cost_pressure(
         upper_trapped_pressure_pct=round(statistics.mean(upper), 2) if upper else 0,
         lower_profit_pressure_pct=round(statistics.mean(lower), 2) if lower else 0,
         explanation=(
-            "按上证与深证近120个交易日指数成交量加权收盘位置估算；"
+            "按五个主要指数近120个交易日成交量加权收盘位置估算；"
             "不是投资者真实持仓成本，不参与趋势判定"
         ),
     )
